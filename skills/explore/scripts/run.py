@@ -268,11 +268,15 @@ _OSSIE_READING_COMMANDS = (
 # SLayer is the opposite trade. Its extra brings FastAPI, uvicorn, mcp, duckdb,
 # jafgen and tantivy, far too much to install on every `maintain` run of every
 # repository, so it follows the config instead: `semantic slayer` always takes it,
-# and a `maintain` command takes it only where `semantic.vendor` is `slayer`
-# (read by `_semantic_vendor_from_config`). Where the read misses, the engine
-# refuses by name with the install line rather than failing on an import.
+# and a command that reads the semantic layer takes it only where
+# `semantic.vendor` is `slayer` (read by `_semantic_vendor_from_config`): every
+# `maintain` command, `explore semantic`, and an `explore` command asked to fold
+# the layer in with `--use-project`. Where the read misses, the engine refuses by
+# name with the install line rather than failing on an import.
 _SLAYER_COMMANDS = (("semantic", "slayer"),)
 _SLAYER_BACKED_GROUPS = ("maintain",)
+_SLAYER_BACKED_COMMANDS = (("explore", "semantic"),)
+_SLAYER_BACKED_FLAG = "--use-project"
 _SLAYER_VENDOR = "slayer"
 
 
@@ -323,9 +327,12 @@ def _feature_extras(argv: list[str], vendor: str | None = None) -> list[str]:
         return ["cluster"]
     extras = ["ossie"] if command in _OSSIE_READING_COMMANDS else []
     group = command[0] if command else None
-    if command in _SLAYER_COMMANDS or (
-        vendor == _SLAYER_VENDOR and group in _SLAYER_BACKED_GROUPS
-    ):
+    reads_layer = (
+        group in _SLAYER_BACKED_GROUPS
+        or command in _SLAYER_BACKED_COMMANDS
+        or (group == "explore" and _SLAYER_BACKED_FLAG in argv)
+    )
+    if command in _SLAYER_COMMANDS or (vendor == _SLAYER_VENDOR and reads_layer):
         extras.append("slayer")
     if command != ("explore", "semantic"):
         return extras

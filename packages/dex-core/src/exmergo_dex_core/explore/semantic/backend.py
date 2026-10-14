@@ -49,9 +49,9 @@ class SemanticLayer(Protocol):
     """The behavior required from a semantic layer and its runtime.
 
     A layer is the semantic system of record, whether it is a local dbt
-    artifact, dbt Cloud, or native Ossie documents.  ``backend`` was the old
-    name for this seam; it hid that all three implementations own discovery as
-    well as execution.
+    artifact, dbt Cloud, native Ossie documents, or SLayer model files.
+    ``backend`` was the old name for this seam; it hid that every
+    implementation owns discovery as well as execution.
     """
 
     descriptor: BackendDescriptor
@@ -148,6 +148,7 @@ def values_gap(backend: Any) -> str:
 _EXECUTION_DEPLOYMENTS: dict[str, dict[str, str]] = {
     "dbt": {EXECUTION_DEX: "local", EXECUTION_VENDOR: "dbt_cloud"},
     "ossie": {EXECUTION_DEX: "local"},
+    "slayer": {EXECUTION_DEX: "local"},
 }
 
 
@@ -171,6 +172,12 @@ def _local_ossie(engine: Any) -> SemanticLayer:
     return LocalOssieLayer.from_engine(engine)
 
 
+def _local_slayer(engine: Any) -> SemanticLayer:
+    from .slayer import LocalSlayerLayer
+
+    return LocalSlayerLayer.from_engine(engine)
+
+
 # Which backend answers for a resolved (vendor, deployment) pair. A table rather
 # than a chain of conditions, so a vendor is a row here and nowhere else, and so
 # a deployment that resolved is a deployment that gets used: the previous shape
@@ -184,6 +191,7 @@ _BACKENDS: dict[tuple[str, str], Callable[[Any], SemanticLayer]] = {
     ("dbt", "local"): _local_metricflow,
     ("dbt", "dbt_cloud"): _hosted_dbt_cloud,
     ("ossie", "local"): _local_ossie,
+    ("slayer", "local"): _local_slayer,
 }
 
 # Deployments dex executes itself, so a hosted semantic source (a dbt Cloud
@@ -202,6 +210,12 @@ _SOURCE_REFUSALS: dict[tuple[str, str], str] = {
         "meaning for native Apache Ossie documents, which are files in this "
         "repository. Drop the source, or select a hosted dbt semantic layer "
         "with semantic.vendor: dbt and semantic.deployment: dbt_cloud"
+    ),
+    ("slayer", "local"): (
+        "a semantic source supplies a hosted dbt Cloud token and has no "
+        "meaning for SLayer model files, which are files in this repository. "
+        "Drop the source, or select a hosted dbt semantic layer with "
+        "semantic.vendor: dbt and semantic.deployment: dbt_cloud"
     ),
 }
 

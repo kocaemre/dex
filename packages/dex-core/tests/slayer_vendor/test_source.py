@@ -1,9 +1,10 @@
 """The SLayer semantic source and the `[slayer]` extra behind it (#596).
 
-What this release promises under `semantic.vendor: slayer`: the coordinates are
-checked again where the source is built, a missing or mismatched extra is a named
-prerequisite rather than an ImportError, MetricFlow is not read in SLayer's
-place, and the extra stays pinned to exactly the release the code names.
+What `semantic.vendor: slayer` promises before any model is read: the
+coordinates are checked again where the source is built, a missing or mismatched
+extra is a named prerequisite rather than an ImportError, MetricFlow is not read
+in SLayer's place, and the extra stays pinned to exactly the release the code
+names. Reading the models themselves is `test_reader.py` (#598).
 
 Most of this runs without SLayer installed, by standing in for the installed
 distribution. The tests at the bottom need the real extra and skip without it;
@@ -23,7 +24,6 @@ from exmergo_dex_core.engine import DexEngine
 from exmergo_dex_core.envelope import Reason, reason_for
 from exmergo_dex_core.errors import (
     ConfigurationError,
-    ProjectError,
     RepoRootRequiredError,
 )
 from exmergo_dex_core.explore.semantic import SemanticBackendError
@@ -140,16 +140,23 @@ def test_the_source_builds_from_its_coordinates(tmp_path, installed):
     ]
 
 
-def test_the_source_answers_a_catalog_and_declines_the_baseline(tmp_path, installed):
-    """Not a snapshot source, so `maintain` reports the baseline absent instead
-    of fingerprinting something else in its place."""
+def test_the_source_answers_a_catalog_and_a_baseline(tmp_path, installed):
+    """Both capabilities, so `maintain` fingerprints SLayer's own layer."""
 
     source = build_semantic_layer(_context(tmp_path))
 
     assert isinstance(source, SemanticCatalogSource)
-    assert not isinstance(source, SemanticSnapshotSource)
-    with pytest.raises(ProjectError, match="does not read SLayer models"):
-        source.semantic_catalog()
+    assert isinstance(source, SemanticSnapshotSource)
+
+
+def test_construction_reads_no_model(tmp_path, installed):
+    """A configured model that does not exist yet is not a construction error,
+    and nothing under the storage root is touched to find that out."""
+
+    source = build_semantic_layer(_context(tmp_path))
+
+    assert source._loaded is None
+    assert not (tmp_path / "semantics").exists()
 
 
 def test_building_without_the_extra_refuses_by_name(tmp_path, absent):
@@ -218,9 +225,15 @@ def test_maintain_does_not_fingerprint_metricflow_in_slayer_s_place():
     assert _semantic_layer(engine, Project()) is None
 
 
-def test_explore_semantic_names_the_missing_backend(tmp_path, installed):
-    with pytest.raises(SemanticBackendError, match="no `explore semantic` backend"):
-        resolve_semantic_layer(_engine(tmp_path))
+def test_explore_semantic_resolves_the_slayer_layer(tmp_path, installed):
+    from exmergo_dex_core.explore.semantic.slayer import LocalSlayerLayer
+
+    assert isinstance(resolve_semantic_layer(_engine(tmp_path)), LocalSlayerLayer)
+
+
+def test_explore_semantic_has_no_hosted_slayer(tmp_path, installed):
+    with pytest.raises(SemanticBackendError, match="no hosted execution override"):
+        resolve_semantic_layer(_engine(tmp_path), api=True)
 
 
 # --- the pin -----------------------------------------------------------------------
@@ -267,10 +280,16 @@ def test_no_core_module_imports_slayer():
 def test_the_check_and_the_seam_import_no_slayer():
     """What every command under `vendor: slayer` reaches before the extra is
     known to be there. A reader that imports SLayer belongs in a module of its
-    own, reached only through a source that was allowed to build."""
+    own (`loader.py`), reached only through a source that was allowed to build."""
 
     package = Path(__file__).resolve().parents[2] / "src" / "exmergo_dex_core"
-    for name in ("__init__.py", "dependency.py", "project.py"):
+    for name in (
+        "__init__.py",
+        "dependency.py",
+        "project.py",
+        "catalog.py",
+        "snapshot.py",
+    ):
         assert not _imports_slayer(package / "slayer" / name), name
 
 

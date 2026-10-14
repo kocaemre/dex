@@ -167,6 +167,31 @@ dataset source, or a field written only in a non-SQL dialect. In every one of th
 dex declined to guess a column rather than failed to find one, so do not go looking
 for the column yourself and do not treat the absence as a data problem.
 
+## When the layer is SLayer models
+
+`vendor: slayer` means the layer is SLayer model files in the repository. `list`
+reads the same shape as anywhere else, with a few things to read differently:
+
+- **A metric is a saved SLayer measure**, named `model.measure`, of type
+  `formula`. Its formula is under `composition.expr`. It declares no aggregation
+  of its own, which is why `measures` is empty and listed under `unavailable`:
+  read the formula for what the number counts.
+- **A dimension token is `model.column`**, the reference a SLayer query uses. A
+  metric's groupable tokens are its own model's columns; columns reached through
+  a join are not listed (`dimension_scope: declarations`), so `--for-dimension`
+  answers within one model.
+- **There are no entities.** The joins and keys are real and reach `explore map`,
+  `explore relationships` and `explore profile` through `--use-project`.
+- **`query` and `values` refuse.** SLayer would run them through its own
+  datasource connection, outside the firewall and the cost guard. Take the same
+  physical route as for Ossie: a dimension's `semantic_model`, that model's
+  `relation`, then `explore profile` and `explore query`.
+
+A model file dex refuses (a stale `version`, a duplicate name, a join to a model
+that is not configured) is named in `notes` with its file and element, and the
+rest of the layer still answers. Report the refusal; do not edit the file to
+silence it unless asked.
+
 ## Cost, and which backend answered
 
 Every result names `execution`. `dex` means dex rendered the statement and ran it
@@ -179,6 +204,6 @@ not treat the absence of an estimate as "it was free".
 `list` and the catalog side cost no warehouse query on any backend: one GraphQL
 round trip hosted, one compiled-artifact read locally, one repository read for a
 native layer. `values` and `query` do spend on the two dbt backends. On a native
-Ossie layer neither runs at all, so the only spend on that path is the
+Ossie layer or a SLayer layer neither runs at all, so the only spend on that path is the
 `explore profile` and `explore query` you reach for instead, and those carry
 their own estimate and confirmation.

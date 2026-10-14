@@ -394,8 +394,8 @@ Two configured axes, and one that is derived:
 
 | axis | values | what it decides | set how |
 |---|---|---|---|
-| `vendor` | `dbt`, `ossie` | which semantic-layer format answers | configured, ambient per repo |
-| `deployment` | `local`, `dbt_cloud` (`local` only for `ossie`) | which endpoint or artifact is read | configured |
+| `vendor` | `dbt`, `ossie`, `slayer` | which semantic-layer format answers | configured, ambient per repo |
+| `deployment` | `local`, `dbt_cloud` (`local` only for `ossie` and `slayer`) | which endpoint or artifact is read | configured |
 | `execution` | `dex`, `vendor` | **whether dex's cost guard applies** | derived, never configured |
 
 `execution` is the one the guards read, so it is reported on every result rather
@@ -840,6 +840,107 @@ The pin lives in four places and two of them are asserted by an offline test, so
 the procedure is written out once in
 [Apache Ossie compatibility](ossie-compatibility.md#upgrading-the-pin). Follow it
 there rather than from memory; updating the hash alone is not an upgrade.
+
+## SLayer models (`vendor: slayer`)
+
+[SLayer](https://github.com/MotleyAI/slayer) keeps a semantic layer as YAML model
+files validated by pydantic. dex reads the configured model files from the
+repository, with no MetricFlow in the path and with SLayer itself never touching
+the warehouse: no datasource is opened, and SLayer's storage is never opened
+either, because opening it runs layout migrations that move and rename files.
+
+```yaml
+semantic:
+  vendor: slayer
+  slayer:
+    base_dir: semantics/slayer          # SLayer's storage root, in the repository
+    models:
+      - models/warehouse/orders.yaml    # models/<data_source>/<name>.yaml
+      - models/warehouse/customers.yaml
+```
+
+The `[slayer]` extra pins one exact SLayer release (`motley-slayer==1.2.0`), and
+selecting the vendor without it refuses by name with `reason: prerequisite`.
+
+### What a model file is checked against
+
+Each file is read with `yaml.safe_load` and validated by SLayer's own
+`SlayerModel`, so what dex accepts is what the pinned release accepts. On top of
+that, and before any of it reaches a catalog:
+
+- **the format version.** `SlayerModel` migrates an older `version` while parsing
+  and reads a newer one best-effort. dex checks first and refuses anything but the
+  pinned release's current format (15 at 1.2.0), naming both numbers. A file with
+  no `version` is stale, because SLayer's storage reads it as version 1.
+- **the path.** A file has to sit where SLayer keeps it,
+  `models/<data_source>/<name>.yaml`, with its `name` and `data_source` agreeing.
+- **the set.** A model name declared twice refuses every file declaring it, since
+  SLayer resolves joins and references by name. A join to a model the set does not
+  hold, or to a column the target does not declare as a base column, refuses the
+  model declaring it, and that runs to a fixed point.
+
+Every refusal names the file and the element (`columns['order id'].name`,
+`joins[0].target_model`). One broken file leaves the rest readable: the catalog
+answers for the models that read and carries a note for each that did not, and it
+raises only when none could be read.
+
+### How SLayer maps onto the catalog
+
+dex's catalog is shaped by MetricFlow, and SLayer is shaped differently:
+
+| SLayer | catalog |
+|---|---|
+| `SlayerModel` | a semantic model, on the relation `sql_table` names. A model backed by `sql` or `source_queries`, or a `sql_table` that is not fully qualified for the connector, carries no relation and a note says why |
+| `Column` | a dimension, keyed `model.column`, the reference a SLayer query uses. `time` for `DATE` and `TIMESTAMP`, `categorical` otherwise. The `column` is the physical one behind it, and `None` for an expression or a quoted identifier |
+| saved `ModelMeasure` | a metric of type `formula`, named `model.measure`, with the formula under `composition.expr`, the model's filters under `filter`, and every column of its own model as a groupable token |
+| `default_time_dimension` | the model's `agg_time_dimension` and each of its metrics' `time_axis`, resolved the way SLayer resolves it (the declared column, else the model's only date or timestamp column) |
+| `Aggregation` | named in a note: a function a formula applies to a column, not an element that answers a number |
+| `Column.primary_key`, `Column.unique` | declared keys, through the declaration channel |
+| `ModelJoin` | a declared relationship with every ordered pair, through the declaration channel |
+
+What has no home is declared in `unavailable` rather than left empty:
+
+- **no measures and no entities.** A saved measure is a formula with no
+  aggregation of its own, and a column becomes an aggregation input only inside a
+  query, so nothing is a measure in the catalog's sense. SLayer has no entities;
+  its keys and joins reach `explore` through the declaration channel instead.
+- **no label, `model_ref` or primary entity on a semantic model.**
+- **no `input_measures` and no queryable grains on a metric.**
+
+`dimension_scope` is `declarations`: a metric's groupable tokens are its own
+model's columns, and columns reached through a join are not listed, because which
+paths SLayer accepts depends on join arity it resolves at query time.
+
+**What is never read.** A `Column` can carry `sampled`, `sampled_values` and
+`distinct_count`, values and cardinalities SLayer cached from the warehouse. None
+of them reaches the catalog, the declarations, or the fingerprint, since values
+reach agent context only through `explore query`'s firewall. `meta` is not carried
+either.
+
+### What reaches `explore`, and what does not run
+
+- a sole primary-key column, or a `unique` column, becomes a declared unique key;
+  several primary-key columns become one composite grain in declared order, never
+  also split into single keys;
+- a join becomes a declared relationship at confidence 1.0, written child to
+  parent: the joining model is the child, except where `cardinality` is
+  `one_to_many`. A single-pair join is also a foreign key, except where
+  `cardinality` is `many_to_many`, which says the far side is not a key;
+- `explore map --use-project` marks each relation with the SLayer models on it.
+
+`explore semantic query` and `values` refuse by name. SLayer has a query runtime,
+but it executes through SLayer's own datasource connection, which carries
+credentials dex does not read and spends outside the cost guard and the query
+firewall. The refusal names the governed route: the relations the catalog reports,
+read with `explore query`.
+
+### What `maintain` makes of the layer
+
+`maintain snapshot` fingerprints each model (excluding the values SLayer caches,
+so a re-profile is not a definition change), each saved measure, each declared
+key, and each join with its full ordered pairs. The layer-neutral detection then
+runs on it unchanged: a definition added, removed or changed, and a dimension,
+key or join naming a column that is gone.
 
 ## Internal architecture
 

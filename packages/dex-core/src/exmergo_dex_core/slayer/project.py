@@ -7,25 +7,22 @@ the repository's one semantic layer. The engine builds this source from
 `semantic.slayer` through :data:`..config.SEMANTIC_SOURCE_FACTORIES`, so
 MetricFlow semantic models are not read while SLayer is configured.
 
-**This release wires configuration and packaging only.** Construction validates
-the coordinates and refuses by name when the pinned `[slayer]` extra is missing
-or mismatched, so every command that consults the semantic layer under
-`semantic.vendor: slayer` reports a prerequisite rather than an ImportError.
-:meth:`SlayerSemanticLayer.semantic_catalog` then refuses because the
-translation into dex's catalog is not part of this release. The class
-deliberately does not implement
-:class:`~..semantic_source.SemanticSnapshotSource`, so `maintain` reports the
-SLayer baseline as absent rather than fingerprinting the MetricFlow layer in its
-place.
+It implements the two source capabilities in :mod:`..semantic_source`:
+:class:`~..semantic_source.SemanticCatalogSource` for the read catalog and
+:class:`~..semantic_source.SemanticSnapshotSource` for the drift fingerprint,
+plus the declaration channel (`declared_definitions()`) that carries declared
+keys and joins to exploration. What maps and what does not is in
+:mod:`.catalog`.
 
 SLayer never touches the warehouse under dex, and nothing here opens SLayer
 storage: the coordinates are paths to committed model files and nothing else.
 Datasource files and `priority.yaml` are refused at configuration, because a
 datasource carries connection credentials.
 
-Nothing in this module imports `slayer`. The reader that will is reached only
-through a source that :func:`.dependency.ensure_available` let construct, so a
-base install can import and run every non-SLayer command.
+Nothing in this module imports `slayer`. The reader that does, :mod:`.loader`,
+is imported only on first read, by a source that
+:func:`.dependency.ensure_available` let construct, so a base install can
+import and run every non-SLayer command.
 """
 
 from __future__ import annotations
@@ -34,11 +31,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..errors import ConfigurationError, ProjectError, RepoRootRequiredError
-from .dependency import ensure_available
+from .dependency import SlayerDependencyError, ensure_available
 
 if TYPE_CHECKING:
+    from ..maintain.snapshot import SemanticLayerSnapshot
+    from ..project_definitions import ProjectDefinitions
     from ..semantic_catalog import SemanticCatalogView
     from ..semantic_source import SemanticSourceContext
+    from .loader import LoadResult
 
 __all__ = [
     "VENDOR_NAME",
@@ -59,6 +59,10 @@ class SlayerSemanticLayer:
     thing construction does check is the extra, through distribution metadata
     rather than an import, because a source built without it could answer
     nothing at all.
+
+    **One instance is meant to live for one command.** It memoizes the validated
+    model set, and a model file is an artifact a later command may rewrite, so
+    an instance held across commands would serve the models as they were.
     """
 
     def __init__(
@@ -72,6 +76,7 @@ class SlayerSemanticLayer:
         self.base_dir = base_dir
         self.models = list(models)
         self.connector = connector
+        self._loaded: LoadResult | None = None
 
     @classmethod
     def from_context(cls, context: SemanticSourceContext) -> SlayerSemanticLayer:
@@ -126,21 +131,88 @@ class SlayerSemanticLayer:
         root = self.repo_root / self.base_dir
         return [root / name for name in self.models]
 
-    def semantic_catalog(self) -> SemanticCatalogView:
-        """Refuse by name: the translation into dex's catalog is not in this
-        release.
+    # --- the declaration channel ----------------------------------------------
 
-        A :class:`~..errors.ProjectError`, the type a layer that cannot be read
-        *yet* raises, so every caller that already degrades around an unreadable
-        layer degrades around this one.
+    def declared_definitions(self) -> ProjectDefinitions:
+        """What the models declare: keys, joins, and the relations they read.
+
+        **This must not raise.** Exploration runs against raw warehouses, and
+        every failure this source has (a missing file, a path escaping the
+        storage root, unparseable YAML, a model SLayer refuses) is a state a user
+        reaches by an ordinary typo. Each yields what could be read, with a note
+        naming the file and the fix.
         """
 
-        raise ProjectError(
-            "semantic.vendor: slayer is configured and SLayer "
-            "is installed, but this dex release does not read SLayer models into "
-            "a semantic catalog yet. Configuration and packaging land first; the "
-            "reader follows in a later release"
+        from ..project_definitions import ProjectDefinitions
+        from . import catalog as catalog_mod
+
+        try:
+            loaded = self._load()
+        except SlayerDependencyError as exc:
+            return ProjectDefinitions(notes=[str(exc)])
+        except (ImportError, OSError, ValueError) as exc:
+            return ProjectDefinitions(notes=[f"SLayer models could not be read: {exc}"])
+        if not loaded.models:
+            return ProjectDefinitions(notes=loaded.notes())
+        return catalog_mod.definitions(
+            loaded.models, connector=self.connector, notes=loaded.notes()
         )
+
+    # --- the catalog channel ---------------------------------------------------
+
+    def semantic_catalog(self) -> SemanticCatalogView:
+        """The models as a read catalog.
+
+        **Raises where the declaration channel degrades**: a caller here asked
+        what the layer contains, so a set of model files none of which could be
+        read is the answer to their question, and an empty catalog would read as
+        "this layer declares nothing". Where some models read and some did not,
+        the catalog answers for the ones that did and carries a note for each
+        that did not.
+        """
+
+        from . import catalog as catalog_mod
+
+        loaded = self._load()
+        if loaded.errors and not loaded.models:
+            listed = "\n  ".join(d.render() for d in loaded.errors)
+            raise ProjectError(
+                "the configured SLayer models could not be read as a semantic "
+                f"layer:\n  {listed}"
+            )
+        return catalog_mod.semantic_catalog(
+            loaded.models, connector=self.connector, notes=loaded.notes()
+        )
+
+    # --- the snapshot channel --------------------------------------------------
+
+    def semantic_layer(self) -> SemanticLayerSnapshot:
+        """The models' own fingerprint: each model, saved measure, declared key,
+        and join, with a content hash.
+
+        Degrades the way :meth:`declared_definitions` does, for the same reason.
+        """
+
+        from ..maintain.snapshot import SemanticLayerSnapshot
+        from . import snapshot as snapshot_mod
+
+        try:
+            loaded = self._load()
+        except SlayerDependencyError as exc:
+            return SemanticLayerSnapshot(notes=[str(exc)])
+        except (ImportError, OSError, ValueError) as exc:
+            return SemanticLayerSnapshot(
+                notes=[f"SLayer models could not be read: {exc}"]
+            )
+        return snapshot_mod.semantic_layer(loaded, connector=self.connector)
+
+    def _load(self) -> LoadResult:
+        if self._loaded is None:
+            ensure_available()
+            from .loader import load_models
+
+            self._loaded = load_models(self.repo_root, self.base_dir, self.models)
+        return self._loaded
 
 
 def build_semantic_layer(context: SemanticSourceContext) -> SlayerSemanticLayer:

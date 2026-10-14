@@ -155,8 +155,8 @@ def test_the_extras_are_the_connector_plus_whatever_the_command_needs(
 
 
 # SLayer is too heavy to install on a guess, so it is the one extra that follows
-# the config: `semantic slayer` always, and a `maintain` command only where
-# `semantic.vendor` is `slayer` (#596).
+# the config: `semantic slayer` always, and a command that reads the semantic layer
+# only where `semantic.vendor` is `slayer` (#596, #598).
 @pytest.mark.parametrize(
     ("argv", "vendor", "expected"),
     [
@@ -168,12 +168,26 @@ def test_the_extras_are_the_connector_plus_whatever_the_command_needs(
         (["maintain", "grain"], "slayer", ["slayer"]),
         (["maintain", "reconcile"], "slayer", ["slayer"]),
         (["--connector", "bigquery", "maintain", "schema"], "slayer", ["slayer"]),
+        # `explore semantic` reads the layer on every mode, and an `explore`
+        # command folds it in where `--use-project` asks.
+        (["explore", "semantic"], "slayer", ["ossie", "slayer", "semantic-api"]),
+        (
+            ["explore", "semantic", "list", "--metric", "orders.revenue"],
+            "slayer",
+            ["ossie", "slayer", "semantic-api"],
+        ),
+        (["explore", "map", "--use-project"], "slayer", ["slayer"]),
+        (["explore", "relationships", "--use-project"], "slayer", ["slayer"]),
+        (["explore", "profile", "o", "--use-project"], "slayer", ["slayer"]),
         # Never on a guess: no vendor, or another one, installs no SLayer.
         (["maintain", "check"], None, ["ossie"]),
         (["maintain", "check"], "ossie", ["ossie"]),
         (["maintain", "check"], "dbt", ["ossie"]),
-        # Outside `maintain`, the vendor alone installs nothing.
+        (["explore", "semantic"], "ossie", ["ossie", "semantic-api"]),
+        (["explore", "map", "--use-project"], None, []),
+        # A command that does not read the layer installs nothing for it.
         (["explore", "inventory"], "slayer", []),
+        (["explore", "map"], "slayer", []),
         (["transform", "plan", "x"], "slayer", []),
     ],
 )

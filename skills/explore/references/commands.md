@@ -264,6 +264,13 @@ it as `execution` (`dex` or `vendor`).
   carries its `semantic_model`, that model carries its `relation`, and
   `explore profile` then `explore query` reach the values. `--api` is refused
   too, since Ossie has no hosted deployment.
+- `semantic.vendor: slayer` reads the SLayer model files named in
+  `semantic.slayer.models` (needs the `[slayer]` extra). `list` and
+  `--for-dimension` answer: a metric is a saved measure named `model.measure`,
+  and a dimension token is `model.column`. `values` and `query` refuse by name,
+  because SLayer executes through its own datasource connection, outside the
+  firewall and the cost guard; the refusal names the same physical route.
+  `--api` is refused, since dex reads no hosted SLayer.
 
 `dimension_scope` says whether a dimension row is one declaration or one
 groupable path, which is why two backends can report different dimension counts

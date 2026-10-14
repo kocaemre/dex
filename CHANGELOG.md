@@ -29,6 +29,24 @@ tag releases both in lockstep, so entries below are keyed by the engine version.
   `reason: prerequisite` and names the install, and MetricFlow semantic models
   are not read in SLayer's place. The skill wrapper installs `[slayer]` for
   `maintain` commands only where the config names that vendor.
+- **SLayer models read into the semantic catalog**
+  ([#598](https://github.com/exmergo/dex/issues/598)). Under
+  `semantic.vendor: slayer`, `explore semantic list` reads the configured model
+  files with no warehouse connection. Each file is validated by the pinned
+  release's own `SlayerModel`, and SLayer's storage is never opened, because
+  opening it moves and renames files. A file in any format version but the pinned
+  release's current one (15) is refused before SLayer can migrate it, as are a
+  model filed under another name, a name declared twice, and a join to a model or
+  column the set does not hold, each naming the file and the element. Each model
+  is a semantic model, each column a dimension keyed `model.column`, and each saved
+  measure a `formula` metric; measures and entities are declared in `unavailable`
+  rather than invented, and `query` and `values` refuse by name. Declared keys
+  (composite primary keys kept whole) and joins (every ordered pair) reach
+  `explore map`, `relationships` and `profile` through `--use-project`, and
+  `maintain snapshot` fingerprints the layer. Values SLayer caches in a model file
+  (`sampled_values`) are never read. The skill wrapper now also installs
+  `[slayer]` for `explore semantic` and for `explore` commands run with
+  `--use-project` where the config names that vendor.
 
 - **Manifests for Copilot CLI, Cursor, Kiro and Gemini CLI, and a listing name and
   links in the Claude Code manifest** ([#607]). Copilot CLI, Cursor Marketplace and

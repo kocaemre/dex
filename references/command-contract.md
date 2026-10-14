@@ -987,6 +987,21 @@ content hash rather than by the version string the document carries. See
 `references/semantic-layer.md`, and `references/ossie-compatibility.md` for what
 dex accepts, checks, links, and declines to claim under that pin.
 
+**`vendor: slayer` reads SLayer model files from the repository**, the ones named
+in `semantic.slayer.models` under `semantic.slayer.base_dir`, each validated by
+SLayer's own `SlayerModel` from the release the `[slayer]` extra pins. A file in
+any format version but that release's current one is refused before SLayer can
+migrate it, and every refusal names the file and the element. `list` answers:
+each model is a semantic model, each column a dimension keyed `model.column`, and
+each saved measure a `formula` metric groupable by its own model's columns, so
+`--for-dimension` answers too. Measures and entities are declared `unavailable`,
+because a saved measure declares no aggregation and SLayer has no entities; its
+keys and joins reach `explore` through the declaration channel instead. `query`
+and `values` refuse by name: SLayer would execute through its own datasource
+connection, outside the cost guard and the query firewall, and under dex SLayer
+never touches the warehouse. Values SLayer caches in a model file
+(`sampled_values`) are never read. See `references/semantic-layer.md`.
+
 `list` costs no warehouse query on either backend, and neither does the reverse
 lookup, which inverts the dimension list each metric already carries rather than
 asking the layer a second question. `values` and `query` each execute one, and both
