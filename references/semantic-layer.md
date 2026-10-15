@@ -939,9 +939,55 @@ read with `explore query`.
 
 `maintain snapshot` fingerprints each model (excluding the values SLayer caches,
 so a re-profile is not a definition change), each saved measure, each declared
-key, and each join with its full ordered pairs. The layer-neutral detection then
-runs on it unchanged: a definition added, removed or changed, and a dimension,
-key or join naming a column that is gone.
+key, and each join with its full ordered pairs and its declared `cardinality`.
+No `maintain` command opens a SLayer datasource or SLayer storage: every axis
+reads the model files and the metadata dex captured through its own connection.
+
+- **Semantic.** The layer-neutral detection runs on the fingerprint unchanged: a
+  definition added, removed or changed, and a dimension, key or join naming a
+  column that is gone. The fingerprint also records the vendor, the SLayer
+  release and the model format version. A content hash is a hash of what the
+  pinned release made of a file, so an upgrade changes every hash without anyone
+  editing one: a release or format change is reported once, as
+  `semantic_format_changed`, and definitions are not compared by content until
+  `maintain snapshot` baselines the new format. Added and removed definitions
+  are still reported. A move from another vendor is `semantic_vendor_changed`,
+  and no definition is compared across it.
+- **Grain.** Every declared key, from `primary_key` (a composite one measured
+  whole) and `unique`, is checked for uniqueness on the model's table, and a
+  failure is `declared_grain_not_unique`. Each join's declared `cardinality` is
+  measured too: `many_to_one` says the target's join columns are unique,
+  `one_to_one` says both sides' are, and a side that is not is
+  `join_cardinality_exceeded`, because every row on the other side can then
+  match several and anything aggregated across the join is counted more than
+  once. A `one_to_many` join is read the other way round. A join declaring no
+  cardinality is named in `warnings` as unchecked, never passed silently.
+- **Schema.** SLayer's `validate-models` compares each `sql_table` model with the
+  live schema through SLayer's own datasource connection, which carries
+  credentials dex does not read. dex runs the same comparison instead, through
+  SLayer's pure entry points (`diff_sql_table_model`, `compute_datasource_drops`),
+  on the columns and types dex's own metadata reports. A declared column the
+  table no longer has is `declared_column_missing`; one whose declared type is in
+  another of SLayer's buckets (number, string, boolean, temporal) than the
+  warehouse's is `declared_type_conflict`; a model whose table was in the
+  baseline and is gone is `declared_relation_missing`; and a model that loses a
+  join, measure or filter only because another drop cascaded into it is
+  `declared_dependency_dropped`. Each finding carries the model's whole removal
+  as SLayer computes it. A warehouse type dex cannot place in a bucket is never
+  reported as a conflict, a column matches case-insensitively when exactly one
+  does, and a model backed by `sql` or `source_queries` is named as not compared,
+  because SLayer checks those by running the query.
+- **Reconcile.** `maintain reconcile` turns those removals into edits of the
+  model files and stores them as a plan of their own, through the `semantic
+  slayer update` route and its validation, reported as `data.semantic_plan_id`
+  beside any dbt plan. Each removed entry is cut out by the lines it occupies, so
+  comments and formatting survive and the diff shows the removal alone; an entry
+  that cannot be cut that way (a flow-style list) leaves the proposal advisory
+  rather than reformatting the file. A model whose table is gone is never
+  removed: deleting the file is advisory, because a vanished table is as often a
+  rename as a retirement. A type conflict is proposed as SLayer's removal, with
+  the alternative named: if the warehouse type is intended, change the declared
+  type instead.
 
 ### Authoring SLayer models
 

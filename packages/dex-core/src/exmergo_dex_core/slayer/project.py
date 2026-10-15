@@ -36,11 +36,15 @@ from ..errors import ConfigurationError, ProjectError, RepoRootRequiredError
 from .dependency import SlayerDependencyError, ensure_available
 
 if TYPE_CHECKING:
+    from ..cache import Dataset
     from ..edits import ApplyResult, SemanticDocumentView
+    from ..maintain.drift import DriftFinding
+    from ..maintain.reconcile import Proposal
     from ..maintain.snapshot import SemanticLayerSnapshot
     from ..project_definitions import ProjectDefinitions
     from ..semantic_catalog import SemanticCatalogView
     from ..semantic_source import SemanticSourceContext
+    from ..transform.plans import PlanEdit
     from .loader import LoadResult
 
 __all__ = [
@@ -208,6 +212,49 @@ class SlayerSemanticLayer:
                 notes=[f"SLayer models could not be read: {exc}"]
             )
         return snapshot_mod.semantic_layer(loaded, connector=self.connector)
+
+    # --- the schema channel ----------------------------------------------------
+
+    def declared_schema_drift(
+        self, current: list[Dataset], baseline: list[Dataset]
+    ) -> tuple[list[DriftFinding], list[str]]:
+        """The models held to dex's warehouse metadata, by SLayer's own rules.
+
+        Degrades the way :meth:`declared_definitions` does: a model set that
+        cannot be read compares nothing and says why.
+        """
+
+        try:
+            loaded = self._load()
+            from .schema import declared_schema_drift
+        except SlayerDependencyError as exc:
+            return [], [str(exc)]
+        except (ImportError, OSError, ValueError) as exc:
+            return [], [f"SLayer models were not compared to the warehouse: {exc}"]
+        return declared_schema_drift(
+            loaded, current, baseline, connector=self.connector
+        )
+
+    def handles_finding(self, finding: DriftFinding) -> bool:
+        from .removal import CODES
+
+        return finding.code in CODES
+
+    def schema_reconcile(
+        self, findings: list[DriftFinding]
+    ) -> tuple[list[Proposal], list[PlanEdit], list[str]]:
+        """Each removal the schema axis recorded, as an edit of its model file."""
+
+        from .removal import proposals_and_edits
+
+        own = [finding for finding in findings if self.handles_finding(finding)]
+        if not own:
+            return [], [], []
+        contents = {
+            name: source.content
+            for name, source in self.semantic_edit_view().files.items()
+        }
+        return proposals_and_edits(own, contents)
 
     # --- native semantic-document authoring ------------------------------------
 

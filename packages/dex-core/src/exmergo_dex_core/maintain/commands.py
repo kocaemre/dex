@@ -211,6 +211,73 @@ def _semantic_layer(
     return project.semantic_layer()
 
 
+def _vendor_semantic_layer(engine: DexEngine) -> SemanticLayer | None:
+    """The configured semantic vendor's own fingerprint, for the grain axis.
+
+    Only where the vendor is its own semantic source: a dbt layer's keys reach
+    the grain axis through the project's declarations, and its fingerprint
+    captures neither keys nor join arity, so reading it here would cost a pass
+    over the model tree for nothing. Never raises: the grain axis runs on its
+    measured half without a semantic layer, as it always has.
+    """
+
+    from ..config import SEMANTIC_SOURCE_FACTORIES
+
+    vendor = (getattr(engine.config.semantic, "vendor", None) or "dbt").lower()
+    if vendor not in SEMANTIC_SOURCE_FACTORIES or engine.repo_root is None:
+        return None
+    try:
+        return _semantic_layer(engine, None)
+    except (DexError, ValidationError, OSError, ValueError):
+        return None
+
+
+def _semantic_schema_source(engine: DexEngine):
+    """The configured semantic source, where it holds its declarations to the
+    warehouse schema itself (``SemanticSchemaSource``), else ``None``.
+
+    Also returns why it could not be built, because a source the vendor names
+    and the environment cannot build is a gap in the schema axis that has to be
+    said rather than left to read as "nothing declared drifted".
+    """
+
+    from ..config import SEMANTIC_SOURCE_FACTORIES
+    from ..semantic_source import SemanticSchemaSource
+
+    vendor = (getattr(engine.config.semantic, "vendor", None) or "dbt").lower()
+    if vendor not in SEMANTIC_SOURCE_FACTORIES or engine.repo_root is None:
+        return None, None
+    try:
+        source = engine.semantic_catalog_source()
+    except (DexError, ValidationError) as exc:
+        return None, (
+            f"the {vendor} semantic layer's declarations were not compared to "
+            f"the warehouse schema: {exc}"
+        )
+    return (source if isinstance(source, SemanticSchemaSource) else None), None
+
+
+def _declared_schema_drift(
+    engine: DexEngine,
+    current: list,
+    snap: snapshot_mod.Snapshot,
+    scope: set[str] | None,
+) -> tuple[list[drift_mod.DriftFinding], list[str]]:
+    """Schema-axis findings a semantic vendor computes for its own declarations.
+
+    Free: the vendor reads the metadata the axis already captured and opens
+    nothing of its own. Scoped like the warehouse half, by identifier.
+    """
+
+    source, why_not = _semantic_schema_source(engine)
+    if source is None:
+        return [], [why_not] if why_not else []
+    findings, notes = source.declared_schema_drift(current, snap.warehouse.datasets)
+    if scope is not None:
+        findings = [f for f in findings if f.identifier in scope]
+    return findings, notes
+
+
 def _composed_definitions(
     engine: DexEngine, project: ExploreProject | None
 ) -> ProjectDefinitions | None:
@@ -607,6 +674,9 @@ def schema_drift(engine: DexEngine, objects: list[str] | None = None) -> DriftRe
     scope_names = list(objects or [])
     scope = _resolve_scope(scope_names, current, snap)
     findings = drift_mod.schema_drift(current, snap, scope, current_transform)
+    declared, declared_notes = _declared_schema_drift(engine, current, snap, scope)
+    findings.extend(declared)
+    warnings.extend(declared_notes)
     # A dataset only one side covers is a block of table_added or table_dropped
     # findings that says nothing about the warehouse moving (#543): named here,
     # beside the findings it accounts for, so the report carries both.
@@ -674,13 +744,14 @@ def grain_drift(engine: DexEngine, objects: list[str] | None = None) -> DriftRes
     )
     project, _ = _read_project(engine)
     composed_definitions = _composed_definitions(engine, project)
-    plan = drift_mod.grain_plan(adapter, snap, scope, composed_definitions)
-    if (
-        plan.key_checks
-        or plan.fanout_pairs
-        or plan.composite_checks
-        or plan.declared_composite_checks
-    ):
+    plan = drift_mod.grain_plan(
+        adapter,
+        snap,
+        scope,
+        composed_definitions,
+        semantic=_vendor_semantic_layer(engine),
+    )
+    if plan.scans():
         estimate, per_table = drift_mod.grain_estimate(adapter, plan)
         command_args.billed_handshake(
             "maintain grain", adapter, estimate, per_table=per_table
@@ -691,11 +762,15 @@ def grain_drift(engine: DexEngine, objects: list[str] | None = None) -> DriftRes
         timeout_seconds=engine.config.query.timeout_seconds,
         min_rows=engine.config.maintain.grain_min_rows,
     )
-    noted = {dataset.identifier for dataset, _keys, _rows in plan.key_checks} | {
-        dataset.identifier
-        for dataset, _combos, _rows in plan.composite_checks
-        + plan.declared_composite_checks
-    }
+    noted = (
+        {dataset.identifier for dataset, _keys, _rows in plan.key_checks}
+        | {
+            dataset.identifier
+            for dataset, _combos, _rows in plan.composite_checks
+            + plan.declared_composite_checks
+        }
+        | {check.identifier for check in plan.join_cardinality_checks or []}
+    )
     notes_by_identifier = _adapter_notes_by_identifier(adapter, sorted(noted))
     _qualify_uniqueness_findings(findings, notes_by_identifier)
     notes = _flatten_adapter_notes(notes_by_identifier)
@@ -1339,6 +1414,11 @@ def check(engine: DexEngine, objects: list[str] | None = None) -> DriftResult:
     schema_findings = drift_mod.schema_drift(
         current_datasets, snap, scope, current_transform
     )
+    declared, declared_notes = _declared_schema_drift(
+        engine, current_datasets, snap, scope
+    )
+    schema_findings.extend(declared)
+    warnings.extend(declared_notes)
     # Same as in schema_drift() (#543): a dataset only one side covers is named
     # beside the block of findings it accounts for.
     warnings.extend(drift_mod.scope_mismatch_warnings(current_datasets, snap, scope))
@@ -1363,18 +1443,14 @@ def check(engine: DexEngine, objects: list[str] | None = None) -> DriftResult:
     # re-verifying here.
     project, _ = _read_project(engine)
     composed_definitions = _composed_definitions(engine, project)
-    plan = drift_mod.grain_plan(adapter, snap, scope, composed_definitions)
+    plan = drift_mod.grain_plan(
+        adapter, snap, scope, composed_definitions, semantic=current_semantic
+    )
     # Added before both returns, so a declared grain the survey could not reach
     # is reported whether the scans run or stop at the handshake.
     warnings.extend(plan.notes)
     checks = drift_mod.cardinality_plan(current_semantic, snap, names)
-    scans_needed = bool(
-        plan.key_checks
-        or plan.fanout_pairs
-        or plan.composite_checks
-        or plan.declared_composite_checks
-        or checks
-    )
+    scans_needed = plan.scans() or bool(checks)
     offer: ConfirmationRequest | None = None
     if scans_needed and command_args.cost_gate(adapter) is not None:
         grain_total, grain_per = drift_mod.grain_estimate(adapter, plan)
@@ -1384,9 +1460,7 @@ def check(engine: DexEngine, objects: list[str] | None = None) -> DriftResult:
             per_table[identifier] = per_table.get(identifier, 0.0) + estimate
         # Only the axes with work planned, so the offer names what the estimate
         # actually buys rather than the pair it usually covers.
-        grain_planned = bool(
-            plan.key_checks or plan.fanout_pairs or plan.composite_checks
-        )
+        grain_planned = plan.scans()
         offered_axes = [
             axis
             for axis, planned in (
@@ -1573,6 +1647,16 @@ def reconcile(engine: DexEngine, drift_class: str | None = None) -> ReconcileRes
     # Ossie already covers via a declared composite is not suggested as if
     # nothing declared it.
     definitions = _composed_definitions(engine, project)
+    # A semantic vendor answers for the schema findings it produced itself,
+    # because only it knows how to take a column out of its own document and
+    # what else goes with it. Everything else takes the project's route.
+    semantic_source, _ = _semantic_schema_source(engine)
+    semantic_findings = [
+        f
+        for f in findings
+        if semantic_source is not None and semantic_source.handles_finding(f)
+    ]
+    findings = [f for f in findings if f not in semantic_findings]
     proposals, edits, build_warnings = reconcile_mod.build(
         findings,
         snap,
@@ -1617,7 +1701,68 @@ def reconcile(engine: DexEngine, drift_class: str | None = None) -> ReconcileRes
         result.diffs = diffs
         result.warnings.extend(plan_warnings)
         result.plan_id = plan.plan_id
+    if semantic_findings:
+        _reconcile_semantic(
+            engine, semantic_source, semantic_findings, drift_class, result
+        )
     return result
+
+
+def _reconcile_semantic(
+    engine: DexEngine,
+    source,
+    findings: list[drift_mod.DriftFinding],
+    drift_class: str | None,
+    result: ReconcileResult,
+) -> None:
+    """The vendor's own proposals, its edits planned through its authoring route.
+
+    A plan of its own beside the project's, because the two land in different
+    trees and validate by different rules: a native semantic plan is validated
+    by the vendor's own model before it is stored, exactly as one authored with
+    `semantic <vendor> update` would be. A set the vendor refuses stores
+    nothing, and every proposal behind it becomes the advisory it then is.
+    """
+
+    from ..transform import native_semantic
+
+    try:
+        proposals, edits, warnings = source.schema_reconcile(findings)
+    except (DexError, OSError, ValueError) as exc:
+        result.warnings.append(
+            f"the semantic layer's own schema findings were not reconciled: {exc}"
+        )
+        return
+    result.warnings.extend(warnings)
+    if edits:
+        vendor = native_semantic.configured_vendor(engine)
+        intent = (
+            f"maintain reconcile {drift_class}" if drift_class else "maintain reconcile"
+        )
+        try:
+            planned = native_semantic.semantic_native(
+                engine, vendor, intent, edits, mode="update"
+            )
+        except (DexError, ValueError) as exc:
+            result.warnings.append(
+                f"the {vendor} edits reconcile proposed were refused by the "
+                f"layer's own validation, so no semantic plan is stored: {exc}"
+            )
+            for proposal in proposals:
+                if proposal.kind == "mechanical":
+                    proposal.kind = "advisory"
+                    proposal.paths = []
+        else:
+            result.diffs = [*result.diffs, *planned.diffs]
+            result.warnings.extend([*planned.warnings, *planned.notes])
+            result.semantic_plan_id = planned.plan_id
+    result.proposals = _mechanical_first([*result.proposals, *proposals])
+
+
+def _mechanical_first(proposals):
+    """Mechanical first, so what has a diff behind it reads before what does not."""
+
+    return sorted(proposals, key=lambda p: p.kind != "mechanical")
 
 
 def cmd_reconcile(args: argparse.Namespace, engine: DexEngine) -> env.Envelope:
@@ -1629,9 +1774,11 @@ def cmd_reconcile(args: argparse.Namespace, engine: DexEngine) -> env.Envelope:
     if not result.proposals:
         scope = f" for the '{drift_class}' axis" if drift_class else ""
         return to_envelope(result, hints={"hint": f"no drift{scope} to reconcile"})
-    if result.plan_id is not None:
+    plan_ids = [p for p in (result.plan_id, result.semantic_plan_id) if p]
+    if plan_ids:
+        applies = " and ".join(f"`transform apply {p}`" for p in plan_ids)
         hint = (
-            f"review the diffs, then apply with `transform apply {result.plan_id}` "
+            f"review the diffs, then apply with {applies} "
             "(human edits since detection surface as a conflict, never a silent "
             "overwrite)"
         )

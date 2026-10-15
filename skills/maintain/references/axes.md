@@ -12,7 +12,7 @@ fingerprints of the dbt project and of the semantic layer.
 - **The two project layers are fingerprinted independently.** The transform
   layer comes from the dbt project; the semantic layer comes from whichever vendor
   `semantic.vendor` names, which may be dbt's own or a native format such as
-  Apache Ossie. A repository with a semantic layer and no dbt project still gets
+  Apache Ossie or SLayer. A repository with a semantic layer and no dbt project still gets
   a baseline and runs every free axis: `transform_layer` comes back null. The
   warning that no project was fingerprinted is reserved for the case where
   neither layer answered.
@@ -46,6 +46,15 @@ Source columns and tables added, dropped, retyped, or renamed; nullability
 changes; declared sources the warehouse no longer honors; a model added,
 removed, or content-changed since the baseline. Free.
 
+Under `semantic.vendor: slayer` the SLayer models are also held to the warehouse
+by SLayer's own `validate-models` rules, run on the metadata dex captured and
+never through a SLayer datasource: `declared_column_missing`,
+`declared_type_conflict` (SLayer's type buckets: number, string, boolean,
+temporal), `declared_relation_missing` (a table gone since the baseline), and
+`declared_dependency_dropped` (a join, measure or filter lost to another drop).
+Each carries the model's whole removal under `data.removal`, which is what
+`maintain reconcile` plans.
+
 ## `maintain volume [<objects>]`: freshness drift
 
 Row counts that collapsed, spiked, or went to zero: the "is the data still
@@ -69,8 +78,11 @@ complete composite, never one column at a time. Aggregates only.
 - Below `maintain.grain_min_rows` rows (default 100), a uniqueness-regression
   finding is damped to `low`, and the damping is named in the finding's `data`
   (`severity_floor_applied`, `grain_min_rows`).
-- Finding codes: `key_lost_uniqueness` (proven unique at baseline, not now) and
-  `declared_grain_not_unique` (declared, never held).
+- Finding codes: `key_lost_uniqueness` (proven unique at baseline, not now),
+  `declared_grain_not_unique` (declared, never held), and
+  `join_cardinality_exceeded` (a join whose declared arity, SLayer's
+  `cardinality`, does not hold: the side it says is unique is not).
+- A join that declares no cardinality is named in `warnings` as unchecked.
 
 ## `maintain semantic [<objects>]`: definition drift
 
@@ -82,6 +94,12 @@ dimensions whose set of values widened or narrowed underneath their metrics.
 
 The cardinality half needs a semantic model that names a transformation model.
 Ossie names none, so on an Ossie layer this command is free and offers no scan.
+
+The baseline records which vendor read the layer, and for SLayer the release and
+model format version. A change in any of them is reported first
+(`semantic_vendor_changed`, `semantic_format_changed`), and definitions are not
+compared by content across it, because an upgrade changes every hash without a
+definition changing.
 
 ## `maintain verify [<selector>]`: is the project right now
 

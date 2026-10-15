@@ -15,6 +15,18 @@ is the relation the semantic model records.
 values SLayer caches from the warehouse (``sampled``, ``sampled_values``,
 ``distinct_count``). Those change whenever SLayer re-profiles, and a re-profile
 reported as a definition change would bury the changes someone made.
+
+**What the hash depends on.** It hashes the model as the pinned release dumps
+it, so a release that adds a field or changes a default changes every hash
+without anyone touching a file. The fingerprint therefore records the vendor,
+the SLayer release and the model format version beside the hashes, and the
+semantic axis reports a change in any of them as that, before it compares a
+single definition.
+
+**Joins keep their declared arity.** Each relationship carries the cardinality
+oriented child to parent, the direction the relationship is written in, and
+the layer says it captured cardinality, so a join declaring none reaches the
+grain axis as unchecked rather than as holding.
 """
 
 from __future__ import annotations
@@ -47,7 +59,7 @@ def semantic_layer(
     """Fingerprint the semantic layer from the validated models."""
 
     if not loaded.models:
-        return SemanticLayerSnapshot(notes=loaded.notes())
+        return SemanticLayerSnapshot(**_provenance(), notes=loaded.notes())
 
     by_name = {entry.model.name: entry.model for entry in loaded.models}
     relations: dict[str, str] = {}
@@ -84,8 +96,23 @@ def semantic_layer(
         metrics=metrics,
         relationships=relationships,
         relationships_and_keys_captured=True,
+        relationship_cardinality_captured=True,
+        **_provenance(),
         notes=notes,
     )
+
+
+def _provenance() -> dict[str, str]:
+    """Which reader produced the hashes, and against which format."""
+
+    from .dependency import SLAYER_VERSION
+    from .loader import FORMAT_VERSION
+
+    return {
+        "vendor": "slayer",
+        "vendor_release": SLAYER_VERSION,
+        "format_version": str(FORMAT_VERSION),
+    }
 
 
 def _semantic_model_def(
@@ -147,12 +174,13 @@ def _relationship_def(
         f"{declared.model}->{declared.to_model}:"
         + ",".join(f"{frm}={to}" for frm, to in declared.column_pairs)
     )
+    declared_cardinality = catalog_mod._cardinality(join)
     entry = {
         "model": declared.model,
         "to_model": declared.to_model,
         "column_pairs": [list(pair) for pair in declared.column_pairs],
         "join_type": str(getattr(join.join_type, "value", join.join_type)),
-        "cardinality": catalog_mod._cardinality(join),
+        "cardinality": declared_cardinality,
     }
     return RelationshipDef(
         name=name,
@@ -161,6 +189,13 @@ def _relationship_def(
         model=declared.model,
         to_model=declared.to_model,
         column_pairs=declared.column_pairs,
+        # `declared_relationship` already turned a one_to_many join round so
+        # the row reads child to parent; the arity turns with it.
+        cardinality=(
+            "many_to_one"
+            if declared_cardinality == "one_to_many"
+            else declared_cardinality
+        ),
     )
 
 

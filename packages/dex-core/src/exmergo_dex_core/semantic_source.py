@@ -37,11 +37,16 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from .errors import ConfigurationError, DexError
 
 if TYPE_CHECKING:
+    from .cache import Dataset
+    from .maintain.drift import DriftFinding
+    from .maintain.reconcile import Proposal
     from .maintain.snapshot import SemanticLayerSnapshot
     from .semantic_catalog import SemanticCatalogView
+    from .transform.plans import PlanEdit
 
 __all__ = [
     "SemanticCatalogSource",
+    "SemanticSchemaSource",
     "SemanticSnapshotSource",
     "SemanticSourceContext",
     "build_semantic_source",
@@ -129,6 +134,53 @@ class SemanticSnapshotSource(Protocol):
         file-backed source has (a missing file, unparseable content, an optional
         extra not installed) is a state a user reaches by an ordinary typo.
         """
+        ...
+
+
+@runtime_checkable
+class SemanticSchemaSource(Protocol):
+    """A source that can hold its own declarations against a warehouse schema.
+
+    A third capability beside the other two, and as declinable. A layer that
+    sits straight on warehouse relations declares columns and their types, and
+    whether the warehouse still has them is a schema-axis question the
+    layer-neutral detectors cannot answer, because how a declared column maps
+    onto a physical one, and which types count as the same, are the vendor's
+    own rules. A source implementing this answers with those rules, from
+    metadata dex captured through its own connection: it is handed the
+    datasets, never a connection, so it cannot open one of its own.
+
+    It also turns what it found back into edits, because only the vendor knows
+    how to remove a column from its own document and what else that removal
+    takes with it.
+    """
+
+    def declared_schema_drift(
+        self, current: list[Dataset], baseline: list[Dataset]
+    ) -> tuple[list[DriftFinding], list[str]]:
+        """Schema-axis findings for the declarations, and what was not compared.
+
+        ``current`` is the warehouse now, ``baseline`` the warehouse the drift
+        baseline pinned, so a relation that has gone can be told from one this
+        connection never listed. **This must not raise**, for the reason
+        ``semantic_layer()`` may not.
+        """
+        ...
+
+    def schema_reconcile(
+        self, findings: list[DriftFinding]
+    ) -> tuple[list[Proposal], list[PlanEdit], list[str]]:
+        """Proposals for this source's own findings, and the edits behind them.
+
+        Takes every finding of the report and answers for the ones it produced,
+        so the caller does not need to know which codes those are. The edits
+        are unvalidated and unstored: the caller plans them through the source's
+        own authoring route, which is what validates them.
+        """
+        ...
+
+    def handles_finding(self, finding: DriftFinding) -> bool:
+        """Whether ``finding`` is one :meth:`schema_reconcile` answers for."""
         ...
 
 

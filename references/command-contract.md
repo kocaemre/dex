@@ -332,15 +332,19 @@ dex maintain check                -> sweep every drift axis vs the snapshot; ran
                                      two-phase on billed connectors: free axes now, one estimate for scans)
 dex maintain schema [<objects>]   -> structural drift: columns/tables added, dropped, retyped, renamed;
                                      nullability; dangling sources; a model added, removed, or
-                                     content-changed since the baseline (metadata, free everywhere)
+                                     content-changed since the baseline (metadata, free everywhere);
+                                     under semantic.vendor: slayer, the models held to the warehouse
+                                     by SLayer's own validate-models rules on dex's metadata
 dex maintain volume [<objects>]   -> freshness drift: row counts that collapsed, emptied, or spiked (free)
 dex maintain grain [<objects>]    -> cardinality/identity drift: lost key uniqueness, changed grain, join
-                                     fanout, and the grains the project declares re-verified
+                                     fanout, the grains the project declares re-verified, and declared
+                                     join arity measured (join_cardinality_exceeded)
                                      (aggregates; gated by --confirm --budget on billed connectors)
 dex maintain semantic [<objects>] -> definition drift and dangling refs (free) + categorical dimension
                                      cardinality change (a scan; gated on billed connectors)
 dex maintain reconcile [<class>]  -> propose the edits that reconcile detected drift, as a stored plan
-                                     of diffs tagged mechanical/advisory (applied with transform apply)
+                                     of diffs tagged mechanical/advisory (applied with transform apply);
+                                     a SLayer layer's own removals as a second plan, semantic_plan_id
 dex maintain verify [<selector>]  -> is the project correct right now, no .dex/snapshot.json baseline
                                      required (unlike every subcommand above). Build status:
                                      failed/skipped build nodes (naming the failed cause, walking back
@@ -1016,6 +1020,12 @@ and `values` refuse by name: SLayer would execute through its own datasource
 connection, outside the cost guard and the query firewall, and under dex SLayer
 never touches the warehouse. Values SLayer caches in a model file
 (`sampled_values`) are never read. See `references/semantic-layer.md`.
+`maintain` reads the same models on every axis without opening a SLayer
+datasource or SLayer storage: the baseline records the SLayer release and model
+format version, declared keys and join `cardinality` are measured on the grain
+axis, and the schema axis runs SLayer's own `validate-models` comparison on the
+metadata dex captured, whose removals `maintain reconcile` plans through the
+`semantic slayer update` route.
 
 `list` costs no warehouse query on either backend, and neither does the reverse
 lookup, which inverts the dimension list each metric already carries rather than

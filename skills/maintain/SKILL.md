@@ -121,6 +121,12 @@ is not described here.
 - On `maintain semantic`, read `unavailable` before hunting for an element kind.
   A native Ossie layer has no measures and no entities, so their absence is the
   format, not drift.
+- `semantic_format_changed` or `semantic_vendor_changed` means the definitions
+  were not compared by content, because the reader changed. Re-snapshot once the
+  upgrade is accepted, rather than reading the quiet definition diff as clean.
+- `join_cardinality_exceeded` means a join's declared arity does not hold, so
+  measures across it are inflated. A join declaring no cardinality is in
+  `warnings` as unchecked, not passed.
 - On `maintain verify`, read `data.suppressed` before reading an empty
   `data.findings` as a clean bill. A project that does not compile suppresses
   every other check. Row population is conservative by design, so a quiet answer
@@ -156,7 +162,11 @@ is not described here.
   type, so a column that starts accepting nulls is reported as a retype.
 - With no editable dbt project, every proposal is advisory and no plan is stored.
   Authoring into a native semantic layer is `semantic ossie` or
-  `semantic slayer` in the transform skill, never this command.
+  `semantic slayer` in the transform skill, never this command. The exception
+  is a SLayer layer's own schema findings (`declared_*`): reconcile stores their
+  removals as a second plan, `data.semantic_plan_id`, through the
+  `semantic slayer update` route. Relay both plan ids; each applies with
+  `transform apply`.
 
 ### Cost
 

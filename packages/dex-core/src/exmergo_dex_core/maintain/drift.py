@@ -605,6 +605,44 @@ class GrainPlan(NamedTuple):
     # is a defect in its present shape, not a before-and-after drift claim.
     # Last/defaulted to retain compatibility with focused detector test plans.
     null_checks: list[tuple[Dataset, list[ColumnMeta], int]] | None = None
+    # Joins the semantic layer declares an arity for, each side that arity says
+    # is a key re-measured as one. Defaulted for the same reason as above.
+    join_cardinality_checks: list[JoinCardinalityCheck] | None = None
+
+    def scans(self) -> bool:
+        """Whether the plan holds any statement that scans, and so is priced.
+
+        The null survey is left out deliberately: it rides along with whatever
+        else the plan scans and never on its own decides that a handshake is
+        owed, which is how the axis has always priced it.
+        """
+
+        return bool(
+            self.key_checks
+            or self.fanout_pairs
+            or self.composite_checks
+            or self.declared_composite_checks
+            or self.join_cardinality_checks
+        )
+
+
+class JoinCardinalityCheck(NamedTuple):
+    """One side of a declared join whose declared arity makes it a key.
+
+    ``many_to_one`` says the parent's join columns are unique, ``one_to_one``
+    says both sides' are. When they are not, every row on the other side can
+    match several here, and whatever is aggregated across the join is counted
+    more than once: the fanout the declaration rules out.
+    """
+
+    relationship: str
+    cardinality: str
+    model: str
+    to_model: str
+    side_model: str
+    identifier: str
+    columns: list[str]
+    row_count: int
 
 
 def grain_plan(
@@ -612,6 +650,7 @@ def grain_plan(
     snap: Snapshot,
     scope: set[str] | None = None,
     definitions: ProjectDefinitions | None = None,
+    semantic: SemanticLayer | None = None,
 ) -> GrainPlan:
     """Survey the grain scans from free metadata, measured and declared.
 
@@ -625,6 +664,13 @@ def grain_plan(
     Reading the declaration here, at plan time, closes that without putting a
     claim into the measurement store: the declared combinations are surveyed and
     priced with the measured ones, and the cache is untouched.
+
+    ``semantic`` is the current semantic-layer fingerprint, read for what a
+    layer that sits straight on warehouse relations declares about them: every
+    key a semantic model declares, single-column ones included (nothing else
+    re-verifies those for a layer that is not the transformation project), and
+    every join whose declared arity makes one side a key. A layer that captured
+    neither (dbt's, whose keys arrive through ``definitions``) adds nothing.
     """
 
     described: dict[str, tuple[set[str], int | None]] = {}
@@ -639,6 +685,7 @@ def grain_plan(
     declared_by_identifier, notes = _declared_composites(
         definitions, sorted(current), scope
     )
+    _fold_semantic_keys(declared_by_identifier, notes, semantic, sorted(current), scope)
     key_checks: list[tuple[Dataset, list[str], int]] = []
     composite_checks: list[tuple[Dataset, list[list[str]], int]] = []
     declared_checks: list[tuple[Dataset, list[list[str]], int]] = []
@@ -685,8 +732,15 @@ def grain_plan(
     # go quiet on a model built since the last snapshot, which is exactly when a
     # freshly declared grain is most likely to be wrong.
     measured_composites = {
-        dataset.identifier: combos for dataset, combos, _rows in composite_checks
+        dataset.identifier: list(combos) for dataset, combos, _rows in composite_checks
     }
+    # A declared single-column key measurement already proved is checked once
+    # too, for the same reason: a semantic layer's primary key is usually the
+    # very column explore found unique.
+    for dataset, keys, _rows in key_checks:
+        measured_composites.setdefault(dataset.identifier, []).extend(
+            [key] for key in keys
+        )
     baselined = {dataset.identifier: dataset for dataset in snap.warehouse.datasets}
     for identifier, declared in sorted(declared_by_identifier.items()):
         columns, row_count = describe(identifier)
@@ -766,6 +820,21 @@ def grain_plan(
             meta, columns = adapter.table_metadata(dataset.identifier)
             null_checks.append((dataset, columns, meta.row_count or 0))
 
+    cardinality_checks = _join_cardinality_checks(
+        semantic, sorted(current), scope, describe, notes
+    )
+    if (
+        cardinality_checks
+        and getattr(adapter, "distinct_combination_counts", None) is None
+    ):
+        notes.append(
+            "this connector cannot probe column combinations, so the declared "
+            "cardinality of "
+            + ", ".join(sorted({check.relationship for check in cardinality_checks}))
+            + " was not verified"
+        )
+        cardinality_checks = []
+
     return GrainPlan(
         key_checks,
         fanout_pairs,
@@ -773,7 +842,130 @@ def grain_plan(
         declared_checks,
         notes,
         null_checks,
+        cardinality_checks,
     )
+
+
+def _fold_semantic_keys(
+    by_identifier: dict[str, list[list[str]]],
+    notes: list[str],
+    semantic: SemanticLayer | None,
+    known: list[str],
+    scope: set[str] | None,
+) -> None:
+    """Add the keys a semantic layer declares to the declared-grain survey.
+
+    Every arity, because the survey measures a combination and a one-column
+    combination is a key. A declaration already in the survey (a composite the
+    declarations channel carried too) is not added twice. Only for a layer that
+    captured its keys: one that did not leaves ``keys`` empty because it has
+    nowhere to declare them, not because it declares none.
+    """
+
+    if semantic is None or not semantic.relationships_and_keys_captured:
+        return
+    for sm in semantic.semantic_models:
+        if not sm.keys:
+            continue
+        matches = _matched_identifier(sm, known)
+        if len(matches) != 1:
+            notes.append(
+                f"the keys declared on semantic model '{sm.name}' "
+                + (
+                    "match several warehouse objects"
+                    if matches
+                    else "match no warehouse object"
+                )
+                + ", so they were not verified"
+            )
+            continue
+        identifier = matches[0]
+        if scope is not None and identifier not in scope:
+            continue
+        bucket = by_identifier.setdefault(identifier, [])
+        for combo in sm.keys:
+            if not any(_same_combo(combo, seen) for seen in bucket):
+                bucket.append(list(combo))
+
+
+def _join_cardinality_checks(
+    semantic: SemanticLayer | None,
+    known: list[str],
+    scope: set[str] | None,
+    describe,
+    notes: list[str],
+) -> list[JoinCardinalityCheck]:
+    """The key each declared join's arity implies, as checks to run.
+
+    A join the layer could have given an arity and did not is named as
+    unchecked, because the silence a holding join produces is the same silence
+    an unchecked one would. ``many_to_many`` declares no bound, so it has
+    nothing to exceed and is not mentioned.
+    """
+
+    if semantic is None or not semantic.relationship_cardinality_captured:
+        return []
+    models = {sm.name: sm for sm in semantic.semantic_models}
+    checks: list[JoinCardinalityCheck] = []
+    unchecked: list[str] = []
+    for rel in semantic.relationships:
+        if rel.cardinality is None:
+            unchecked.append(rel.name)
+            continue
+        sides: list[tuple[str, list[str]]] = []
+        if rel.cardinality in ("many_to_one", "one_to_one"):
+            sides.append((rel.to_model, [to for _frm, to in rel.column_pairs]))
+        if rel.cardinality == "one_to_one":
+            sides.append((rel.model, [frm for frm, _to in rel.column_pairs]))
+        for side_model, columns in sides:
+            sm = models.get(side_model)
+            matches = _matched_identifier(sm, known) if sm is not None else []
+            if len(matches) != 1:
+                notes.append(
+                    f"join '{rel.name}' is declared {rel.cardinality}, and "
+                    f"'{side_model}' "
+                    + (
+                        "matches several warehouse objects"
+                        if matches
+                        else "matches no warehouse object"
+                    )
+                    + ", so its fanout was not verified"
+                )
+                continue
+            identifier = matches[0]
+            if scope is not None and identifier not in scope:
+                continue
+            live_columns, row_count = describe(identifier)
+            missing = [c for c in columns if c not in live_columns]
+            if missing:
+                # A vanished join column is the schema and semantic axes' story.
+                notes.append(
+                    f"join '{rel.name}' keys on {', '.join(missing)}, which "
+                    f"{identifier} no longer has, so its fanout was not verified"
+                )
+                continue
+            if not row_count:
+                continue
+            checks.append(
+                JoinCardinalityCheck(
+                    relationship=rel.name,
+                    cardinality=rel.cardinality,
+                    model=rel.model,
+                    to_model=rel.to_model,
+                    side_model=side_model,
+                    identifier=identifier,
+                    columns=columns,
+                    row_count=row_count,
+                )
+            )
+    if unchecked:
+        notes.append(
+            "no cardinality is declared on join(s) "
+            + ", ".join(sorted(unchecked))
+            + ", so their fanout was not checked; declare one (many_to_one, "
+            "one_to_one, one_to_many or many_to_many) to have it verified"
+        )
+    return checks
 
 
 def _same_combo(left: list[str], right: list[str]) -> bool:
@@ -850,6 +1042,14 @@ def grain_estimate(adapter: Adapter, plan: GrainPlan) -> tuple[float, dict[str, 
             dataset.identifier, 0.0
         ) + query_estimate(
             _distinct_combination_stand_in(dataset.identifier, combos, adapter.dialect)
+        )
+    for check in plan.join_cardinality_checks or []:
+        per_table[check.identifier] = per_table.get(
+            check.identifier, 0.0
+        ) + query_estimate(
+            _distinct_combination_stand_in(
+                check.identifier, [check.columns], adapter.dialect
+            )
         )
     probes = rel_mod.probe_statements(
         [live for _baseline, live in plan.fanout_pairs], adapter.dialect
@@ -1045,6 +1245,51 @@ def grain_drift(
                 )
             )
 
+    for check in plan.join_cardinality_checks or []:
+        if combo_counts is None:
+            break
+        count = combo_counts(check.identifier, [check.columns]).get(
+            tuple(check.columns)
+        )
+        row_count = check.row_count
+        live_meta, _ = adapter.table_metadata(check.identifier)
+        if live_meta.row_count is not None:
+            row_count = live_meta.row_count
+        if count is None or count >= row_count:
+            continue
+        members = ", ".join(check.columns)
+        other = check.model if check.side_model == check.to_model else check.to_model
+        severity, floor_data, floor_note = _grain_severity(row_count, min_rows)
+        findings.append(
+            DriftFinding(
+                axis="grain",
+                code="join_cardinality_exceeded",
+                identifier=check.identifier,
+                column=members,
+                severity=severity,
+                detail=(
+                    f"join '{check.relationship}' is declared {check.cardinality}, "
+                    f"and ({members}) on {check.identifier} is not unique: "
+                    f"{count} distinct over {row_count} rows "
+                    f"(~{row_count - count} duplicate rows). Each '{other}' row can "
+                    f"match several '{check.side_model}' rows, so anything "
+                    f"aggregated across this join is counted more than once"
+                    f"{floor_note}"
+                ),
+                data={
+                    "relationship": check.relationship,
+                    "declared_cardinality": check.cardinality,
+                    "model": check.model,
+                    "to_model": check.to_model,
+                    "side_model": check.side_model,
+                    "columns": list(check.columns),
+                    "distinct_count": count,
+                    "row_count": row_count,
+                    **floor_data,
+                },
+            )
+        )
+
     live = [copy for _baseline, copy in plan.fanout_pairs]
     rel_mod.verify_relationships(adapter, live, timeout_seconds=timeout_seconds)
     for baseline_rel, current_rel in plan.fanout_pairs:
@@ -1158,10 +1403,24 @@ def semantic_free_drift(
     baseline = snap.semantic_layer or SemanticLayer()
     current = current_semantic or SemanticLayer()
 
+    # Which reader produced each side comes first, because it decides whether
+    # the two sides can be compared definition by definition at all.
+    provenance = _provenance_change(baseline, current)
+    if provenance is not None:
+        findings.append(provenance)
+    vendor_changed = provenance is not None and provenance.code == (
+        "semantic_vendor_changed"
+    )
+    hashes_comparable = provenance is None
+
     base_defs = {("semantic_model", d.name): d for d in baseline.semantic_models}
     base_defs.update({("metric", m.name): m for m in baseline.metrics})
     cur_defs = {("semantic_model", d.name): d for d in current.semantic_models}
     cur_defs.update({("metric", m.name): m for m in current.metrics})
+    if vendor_changed:
+        # Another vendor's names are another vocabulary: every definition on
+        # both sides would read as removed and added, and none of it is drift.
+        base_defs, cur_defs = {}, {}
     # Relationships join the same generic added/removed/changed diff below,
     # but only when both sides actually captured them (#409): a baseline
     # pinned before this field existed has none, and comparing that against a
@@ -1196,6 +1455,8 @@ def semantic_free_drift(
             )
         )
     for key in sorted(base_defs.keys() & cur_defs.keys()):
+        if not hashes_comparable:
+            break
         if base_defs[key].content_sha256 != cur_defs[key].content_sha256:
             kind, name = key
             path = cur_defs[key].path
@@ -1387,6 +1648,72 @@ def semantic_free_drift(
             if input_metric not in all_metrics | all_measures
         )
     return findings
+
+
+def _provenance_change(
+    baseline: SemanticLayer, current: SemanticLayer
+) -> DriftFinding | None:
+    """A change in the reader behind the fingerprint, reported as itself.
+
+    A content hash is a hash of what one reader produced from a file, so a
+    different vendor, a different vendor release, or a different model format
+    version changes hashes nobody's edit changed. Reported once, ahead of the
+    definition diff, so an upgrade reads as an upgrade rather than as every
+    model in the layer redefined. Only fields both sides recorded are compared:
+    a baseline pinned before they existed records none, and an unrecorded side
+    is not a change.
+    """
+
+    def differs(field: str) -> tuple[str, str] | None:
+        before, after = getattr(baseline, field), getattr(current, field)
+        if before is None or after is None or before == after:
+            return None
+        return before, after
+
+    vendor = differs("vendor")
+    if vendor is not None:
+        return DriftFinding(
+            axis="semantic",
+            code="semantic_vendor_changed",
+            severity="medium",
+            detail=(
+                f"the baseline's semantic layer was read as {vendor[0]} and the "
+                f"current one as {vendor[1]}, so no definition was compared: "
+                "the two name their definitions in different vocabularies. "
+                "Re-run `maintain snapshot` once the move is the state you vouch "
+                "for"
+            ),
+            data={"vendor_before": vendor[0], "vendor_after": vendor[1]},
+        )
+    changes = {
+        field: change
+        for field in ("vendor_release", "format_version")
+        if (change := differs(field)) is not None
+    }
+    if not changes:
+        return None
+    described = "; ".join(
+        f"{field.replace('_', ' ')} {before} -> {after}"
+        for field, (before, after) in changes.items()
+    )
+    data: dict = {"vendor": current.vendor}
+    for field, (before, after) in changes.items():
+        data[f"{field}_before"] = before
+        data[f"{field}_after"] = after
+    return DriftFinding(
+        axis="semantic",
+        code="semantic_format_changed",
+        severity="medium",
+        detail=(
+            f"the {current.vendor or 'semantic'} layer was fingerprinted under a "
+            f"different release or model format than the baseline ({described}), "
+            "so definitions were not compared by content: an upgrade changes "
+            "every hash without changing a definition. Added and removed "
+            "definitions are still reported. Re-run `maintain snapshot` to "
+            "baseline the upgraded format"
+        ),
+        data=data,
+    )
 
 
 class CardinalityCheck(NamedTuple):

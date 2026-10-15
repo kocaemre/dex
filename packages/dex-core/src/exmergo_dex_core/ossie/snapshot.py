@@ -56,7 +56,7 @@ def semantic_layer(
     """Fingerprint the semantic layer from the validated documents."""
 
     if not loaded.documents:
-        return SemanticLayerSnapshot(notes=loaded.notes())
+        return SemanticLayerSnapshot(vendor="ossie", notes=loaded.notes())
 
     semantic_models: list[SemanticModelDef] = []
     metrics: list[MetricDef] = []
@@ -107,6 +107,7 @@ def semantic_layer(
         metrics=metrics,
         relationships=relationships,
         relationships_and_keys_captured=True,
+        vendor="ossie",
         notes=notes,
     )
 

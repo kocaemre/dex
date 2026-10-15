@@ -256,6 +256,13 @@ class RelationshipDef(BaseModel):
     model: str
     to_model: str
     column_pairs: list[tuple[str, str]] = Field(default_factory=list)
+    #: The declared arity read in this row's own direction, ``model`` to
+    #: ``to_model``: ``many_to_one``, ``one_to_one`` or ``many_to_many``, or
+    #: ``None`` where nothing was declared. A format that declares a join the
+    #: other way round (``one_to_many``) is recorded oriented child to parent,
+    #: so the grain axis has one rule to read rather than four. Meaningful only
+    #: where the layer sets ``relationship_cardinality_captured``.
+    cardinality: str | None = None
 
 
 class SemanticLayerSnapshot(BaseModel):
@@ -279,12 +286,32 @@ class SemanticLayerSnapshot(BaseModel):
     reporting false drift or a false clean bill; only a layer that set it
     ``True`` on both sides of a comparison is one the two new checks run
     against.
+
+    ``relationship_cardinality_captured`` is the same idea for
+    ``RelationshipDef.cardinality``: a layer that sets it declares that a
+    ``None`` there means the author declared no arity, which the grain axis
+    reports as unchecked, rather than that the format has nowhere to declare
+    one.
+
+    ``vendor``, ``vendor_release`` and ``format_version`` say which reader
+    produced the fingerprint and against which version of the vendor's own
+    format. The content hashes are hashes of what that reader produced, so two
+    fingerprints from different readers, or from one reader across a release
+    that changed its model, are not comparable definition by definition, and
+    ``semantic_free_drift`` reports the change itself instead of every model
+    in the layer as changed. ``None`` is "not recorded" (every baseline pinned
+    before these fields existed), and an unrecorded side is never read as a
+    change. Excluded from every content hash.
     """
 
     semantic_models: list[SemanticModelDef] = Field(default_factory=list)
     metrics: list[MetricDef] = Field(default_factory=list)
     relationships: list[RelationshipDef] = Field(default_factory=list)
     relationships_and_keys_captured: bool = False
+    relationship_cardinality_captured: bool = False
+    vendor: str | None = None
+    vendor_release: str | None = None
+    format_version: str | None = None
     notes: list[str] = Field(default_factory=list)
 
 
@@ -420,7 +447,9 @@ def semantic_layer_snapshot(view: DbtProjectView) -> SemanticLayerSnapshot:
             semantic_models.append(_semantic_model_def(entry, path))
         else:
             metrics.append(_metric_def(entry, path))
-    return SemanticLayerSnapshot(semantic_models=semantic_models, metrics=metrics)
+    return SemanticLayerSnapshot(
+        semantic_models=semantic_models, metrics=metrics, vendor="dbt"
+    )
 
 
 # RETRO: Compatibility names: the JSON field is intentionally still `semantic_layer`.

@@ -330,6 +330,22 @@ def _advisory(finding: DriftFinding) -> Proposal:
             "update the semantic definition with `semantic update`, or restore "
             "the model/column it references"
         ),
+        "join_cardinality_exceeded": (
+            "the semantic layer declares an arity this join does not have, so "
+            "measures aggregated across it are inflated: dedup the side that "
+            "should be unique, or declare the cardinality the data has. dex "
+            "proposes no edit, because which of the two is right is a decision"
+        ),
+        "semantic_vendor_changed": (
+            "the semantic layer moved to another vendor since the baseline; "
+            "once the move is the state you vouch for, re-run `maintain "
+            "snapshot` to baseline it"
+        ),
+        "semantic_format_changed": (
+            "the semantic layer was read under another release or model format "
+            "than the baseline, so its definitions could not be compared; "
+            "re-run `maintain snapshot` to baseline the upgraded format"
+        ),
     }
     return Proposal(
         axis=finding.axis,

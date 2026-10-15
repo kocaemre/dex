@@ -171,6 +171,10 @@ class ReconcileResult(Result):
 
     proposals: list[Proposal] = Field(default_factory=list)
     plan_id: str | None = None
+    #: The plan holding a native semantic layer's own edits, stored through
+    #: that vendor's authoring route. Separate from ``plan_id`` because the two
+    #: plans land in different trees and are validated by different rules.
+    semantic_plan_id: str | None = None
 
     def data(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -189,4 +193,6 @@ class ReconcileResult(Result):
             )
         if self.plan_id is not None:
             payload["plan_id"] = self.plan_id
+        if self.semantic_plan_id is not None:
+            payload["semantic_plan_id"] = self.semantic_plan_id
         return payload

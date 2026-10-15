@@ -9,6 +9,29 @@ tag releases both in lockstep, so entries below are keyed by the engine version.
 
 ## [Unreleased]
 
+### Added
+
+- **`maintain` under `semantic.vendor: slayer`**
+  ([#600](https://github.com/exmergo/dex/issues/600)). Every drift axis now
+  reads a SLayer layer, without opening a SLayer datasource or SLayer storage.
+  The semantic baseline records the vendor, the SLayer release and the model
+  format version, and a change in any of them is reported first
+  (`semantic_vendor_changed`, `semantic_format_changed`) rather than as every
+  model changed. The grain axis measures every key a SLayer model declares,
+  single-column ones included, and each join's declared `cardinality`: a
+  `many_to_one` or `one_to_one` join whose key side is not unique is
+  `join_cardinality_exceeded`, and a join declaring none is named in `warnings`
+  as unchecked. The schema axis runs SLayer's own `validate-models` comparison
+  through its pure entry points on the metadata dex captured, reporting
+  `declared_column_missing`, `declared_type_conflict`,
+  `declared_relation_missing` and `declared_dependency_dropped`, each with the
+  model's whole removal as SLayer computes it. `maintain reconcile` cuts those
+  removals out of the model files, leaving every other byte as it was, and
+  stores them as a second plan through the `semantic slayer update` route
+  (`data.semantic_plan_id`); removing a whole model stays advisory. A new
+  `SemanticSchemaSource` capability is what a semantic source implements to take
+  part in the schema axis and reconcile this way.
+
 ## [1.13.2] - 2026-10-14
 
 ### Added
