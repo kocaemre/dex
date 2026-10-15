@@ -32,6 +32,22 @@ tag releases both in lockstep, so entries below are keyed by the engine version.
   `SemanticSchemaSource` capability is what a semantic source implements to take
   part in the schema axis and reconcile this way.
 
+### Fixed
+
+- **`semantic slayer` refuses a key SLayer does not declare**
+  ([#620](https://github.com/exmergo/dex/issues/620)). The pinned `SlayerModel`
+  and the models nested in it ignore unknown keys, so `entities`, a measure's
+  `agg` or `agg_time_dimension`, or a typo validated, were stored in the plan,
+  written byte for byte, and did nothing. Every mapping is now compared with the
+  fields the pinned release declares at its level (model, column and its
+  `format`, saved measure, aggregation and its `params`, join), and a key outside
+  them in an edited model refuses the plan as `unknown_key`, naming the file,
+  the element and the release, with what SLayer uses instead where the key is a
+  MetricFlow habit. The reader, and a configured model the plan does not edit,
+  report the same key as a warning, since SLayer reads the file. Every declared
+  field is still accepted, `meta` and a column's cached `sampled`,
+  `sampled_values` and `distinct_count` included.
+
 ## [1.13.2] - 2026-10-14
 
 ### Added

@@ -180,9 +180,11 @@ a field, flag, or macro you need is not described here.
   install to relay.
 - SLayer declares no entities, no aggregation on a saved measure (the formula
   carries it, as in `amount:sum`), and no per-measure time dimension (only the
-  model's `default_time_dimension`). Never write those into a SLayer model:
-  SLayer ignores a key it does not know, so an invented one validates, is
-  written, and does nothing.
+  model's `default_time_dimension`). Never write those into a SLayer model.
+  SLayer itself ignores a key it does not know, so dex refuses any key the
+  pinned release does not declare (`[unknown_key]`, naming the file, the element
+  and the release, and what SLayer uses instead where there is an equivalent):
+  remove it rather than looking for a spelling that passes.
 
 ### Seeds and PII
 

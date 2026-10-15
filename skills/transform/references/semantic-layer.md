@@ -164,10 +164,20 @@ and re-plan.
   its columns, and each saved measure's formula parses with SLayer's parser
   (another saved measure may be named bare). Without the `[sql]` extra the
   formula check is skipped with a named note.
+- **An edited model's keys.** Every key, at every level (model, column and its
+  `format`, saved measure, aggregation and its `params`, join), is a field the
+  pinned release declares there. SLayer itself ignores any other key, so it
+  would be written byte for byte and do nothing; dex refuses it as
+  `[unknown_key]`, naming the file, the element (`measures['revenue'].agg`) and
+  the pinned release. Where the key is a MetricFlow habit (`entities`, `agg`,
+  `agg_time_dimension`, `expr`, `create_metric`, ...), the refusal says what
+  SLayer uses instead. Remove the key; there is no spelling of it that SLayer
+  reads. A model the plan does not edit is only warned about, the way the
+  reader warns. Every declared field is accepted, `meta` and the values SLayer
+  caches on a column (`sampled`, `sampled_values`, `distinct_count`) included.
 
-What it does not catch: a key SLayer does not know. The pinned `SlayerModel`
-ignores unknown keys, so an invented field validates, is written byte for byte,
-and does nothing. That is why the gaps below matter.
+The refusal is a backstop, not a guide: the gaps below are what to write
+instead.
 
 ### What SLayer does not declare
 

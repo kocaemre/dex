@@ -575,6 +575,20 @@ def test_one_broken_file_leaves_the_rest_readable_with_a_note(tmp_path):
     assert layer.declared_definitions().notes
 
 
+def test_an_unknown_key_is_read_past_with_a_note(tmp_path):
+    """SLayer reads a file carrying a key it does not declare, so dex does too,
+    and says the key does nothing (#620)."""
+
+    layer = source(tmp_path, {**CUSTOMERS, "entities": [{"name": "customer"}]})
+    catalog = layer.semantic_catalog()
+
+    assert [m.name for m in catalog.semantic_models] == ["customers"]
+    assert any(
+        "models/wh/customers.yaml: entities: [unknown_key]" in note
+        for note in catalog.notes
+    )
+
+
 def test_the_declaration_and_snapshot_channels_never_raise(tmp_path):
     layer = source(tmp_path, raw={"models/wh/broken.yaml": "{"})
 

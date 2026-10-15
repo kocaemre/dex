@@ -24,6 +24,13 @@ is an error naming both numbers.
 files, which is how authoring validates the set a plan would leave before it is
 stored, with no file written and no storage opened.
 
+**A key the pinned release does not declare is named.** ``SlayerModel`` and
+the models nested in it ignore an unknown key, so a field SLayer does not have
+validates and then does nothing. Every mapping is compared with the fields its
+model declares, at every level, and each key outside them is an ``unknown_key``
+diagnostic. Reading reports it as a warning, because SLayer reads the file;
+authoring refuses it, because dex would be writing a key that does nothing.
+
 **Problems are collected, not raised.** A file with two problems reports two,
 and a caller on the declaration channel may not raise at all, so every finding
 is a :class:`Diagnostic` naming the file and the element it sits at. A model
@@ -34,14 +41,15 @@ from looking like "this declares nothing".
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import types
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Annotated, Any, Union, get_args, get_origin
 
 import yaml
-from pydantic import ValidationError
+from pydantic import AliasChoices, BaseModel, ValidationError
 from slayer.core.models import SlayerModel, join_key_error
 from slayer.storage.migrations import CURRENT_VERSIONS
 
@@ -261,28 +269,183 @@ def _parse(text: str, name: str) -> tuple[LoadedModel | None, list[Diagnostic]]:
     if stale is not None:
         return None, refusal("version", "format_version", stale)
 
+    # Named whether or not the model validates, so an author fixing a refusal
+    # sees every problem in the file at once.
+    unknown = [
+        Diagnostic(
+            file=name,
+            element=_element(raw, loc),
+            rule="unknown_key",
+            severity=WARNING,
+            message=_unknown_key_message(loc[-1], owner),
+        )
+        for loc, owner in _unknown_keys(raw, SlayerModel, ())
+    ]
     try:
         model = SlayerModel.model_validate(raw)
     except ValidationError as exc:
         return None, [
-            Diagnostic(
-                file=name,
-                element=_element(raw, error["loc"]),
-                rule="invalid",
-                severity=ERROR,
-                message=_message(error),
-            )
-            for error in exc.errors()
+            *(
+                Diagnostic(
+                    file=name,
+                    element=_element(raw, error["loc"]),
+                    rule="invalid",
+                    severity=ERROR,
+                    message=_message(error),
+                )
+                for error in exc.errors()
+            ),
+            *unknown,
         ]
     except (ValueError, TypeError) as exc:
         # A SLayer validator that raises its own error outside pydantic's
         # wrapping still means the model is not one the pinned release accepts.
-        return None, refusal("(root)", "invalid", str(exc))
+        return None, [*refusal("(root)", "invalid", str(exc)), *unknown]
 
     mismatch = _path_problem(name, model)
     if mismatch is not None:
-        return None, refusal("(root)", "path", mismatch)
-    return LoadedModel(file=name, model=model), []
+        return None, [*refusal("(root)", "path", mismatch), *unknown]
+    return LoadedModel(file=name, model=model), unknown
+
+
+#: What each pinned model is, as a reader holding the file would call it.
+_OWNERS = {
+    "SlayerModel": "a model",
+    "Column": "a column",
+    "NumberFormat": "a column's format",
+    "ModelMeasure": "a saved measure",
+    "Aggregation": "an aggregation",
+    "AggregationParam": "an aggregation parameter",
+    "ModelJoin": "a join",
+    "SourceModelOrigin": "a model's source_model_origin",
+}
+
+#: What SLayer uses instead of a key an author carried over from MetricFlow,
+#: keyed by the pinned model the key was written on.
+_INSTEAD = {
+    ("SlayerModel", "entities"): (
+        "SLayer declares no entities: a key is a column flagged "
+        "`primary_key: true` (several make one composite key) or `unique: true`, "
+        "and a relationship is a `joins:` entry"
+    ),
+    ("SlayerModel", "primary_entity"): (
+        "SLayer declares no entities: a model's key is its columns flagged "
+        "`primary_key: true`"
+    ),
+    ("SlayerModel", "dimensions"): "SLayer declares dimensions as `columns:`",
+    ("SlayerModel", "metrics"): (
+        "a SLayer metric is a saved measure under `measures:`, with a `formula`"
+    ),
+    ("SlayerModel", "defaults"): (
+        "a model's time dimension is `default_time_dimension`, at the model's root"
+    ),
+    ("SlayerModel", "agg_time_dimension"): (
+        "a model's time dimension is `default_time_dimension`"
+    ),
+    ("SlayerModel", "model"): (
+        "the relation a model sits on is `sql_table`, fully qualified"
+    ),
+    ("ModelMeasure", "agg"): (
+        "a saved measure's `formula` carries its aggregation, as in `amount:sum`"
+    ),
+    ("ModelMeasure", "expr"): (
+        "a saved measure's expression is its `formula`, aggregation included, as "
+        "in `amount:sum`"
+    ),
+    ("ModelMeasure", "agg_time_dimension"): (
+        "every saved measure is bucketed by its model's `default_time_dimension`"
+    ),
+    ("ModelMeasure", "create_metric"): (
+        "a saved measure is queryable as it stands, with no metric to create"
+    ),
+    ("Column", "expr"): "a column's expression is `sql`",
+}
+
+
+def _unknown_keys(
+    raw: Mapping[Any, Any], owner: type[BaseModel], loc: tuple[Any, ...]
+) -> Iterator[tuple[tuple[Any, ...], type[BaseModel]]]:
+    """Every key in ``raw`` that ``owner`` declares no field for, at any depth.
+
+    Yields each key's location and the model it was written on. A model that
+    keeps extra keys (``extra="allow"``) or refuses them itself
+    (``extra="forbid"``) is left to pydantic.
+    """
+
+    if owner.model_config.get("extra") not in (None, "ignore"):
+        return
+    accepted: dict[str, Any] = {}
+    for name, info in owner.model_fields.items():
+        for spelling in (name, info.alias, *_alias_choices(info.validation_alias)):
+            if isinstance(spelling, str):
+                accepted[spelling] = info.annotation
+    for key, value in raw.items():
+        if key not in accepted:
+            yield (*loc, key), owner
+            continue
+        yield from _unknown_in(value, accepted[key], (*loc, key))
+
+
+def _unknown_in(
+    value: Any, annotation: Any, loc: tuple[Any, ...]
+) -> Iterator[tuple[tuple[Any, ...], type[BaseModel]]]:
+    """Descend into ``value`` wherever its field's type holds a pinned model."""
+
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        yield from _unknown_in(value, get_args(annotation)[0], loc)
+        return
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        if isinstance(value, Mapping):
+            yield from _unknown_keys(value, annotation, loc)
+        return
+    args = [a for a in get_args(annotation) if a is not Ellipsis]
+    if origin in (Union, types.UnionType):
+        members = [a for a in args if a is not type(None)]
+        models = [
+            a for a in members if isinstance(a, type) and issubclass(a, BaseModel)
+        ]
+        # Two models in one union leave no way to tell which a mapping is meant
+        # as, and a key one of them declares is not unknown.
+        if len(models) <= 1:
+            for member in members:
+                yield from _unknown_in(value, member, loc)
+        return
+    if origin in (list, tuple, set, frozenset) or (
+        isinstance(origin, type) and issubclass(origin, Sequence)
+    ):
+        if isinstance(value, list) and len(args) == 1:
+            for index, item in enumerate(value):
+                yield from _unknown_in(item, args[0], (*loc, index))
+        return
+    if (
+        isinstance(origin, type)
+        and issubclass(origin, Mapping)
+        and isinstance(value, Mapping)
+        and len(args) == 2
+    ):
+        for key, item in value.items():
+            yield from _unknown_in(item, args[1], (*loc, key))
+
+
+def _alias_choices(alias: Any) -> list[Any]:
+    if isinstance(alias, AliasChoices):
+        return list(alias.choices)
+    return [alias]
+
+
+def _unknown_key_message(key: Any, owner: type[BaseModel]) -> str:
+    what = _OWNERS.get(owner.__name__, f"a {owner.__name__}")
+    instead = _INSTEAD.get((owner.__name__, key))
+    fix = (
+        f"{instead[0].upper()}{instead[1:]}. Remove the key"
+        if instead
+        else "Correct it if it is a typo, or remove it"
+    )
+    return (
+        f"`{key}` is not a field SLayer {SLAYER_VERSION} (the release dex pins) "
+        f"declares on {what}, so SLayer ignores it and it does nothing. {fix}"
+    )
 
 
 def _version_problem(version: Any) -> str | None:

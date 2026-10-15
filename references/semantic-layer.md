@@ -879,6 +879,13 @@ that, and before any of it reaches a catalog:
   SLayer resolves joins and references by name. A join to a model the set does not
   hold, or to a column the target does not declare as a base column, refuses the
   model declaring it, and that runs to a fixed point.
+- **unknown keys.** `SlayerModel` and every model nested in it ignore a key they
+  do not declare, so a field SLayer does not have validates and does nothing.
+  dex compares every mapping with the fields the pinned release declares at its
+  level (model, column and its `format`, saved measure, aggregation and its
+  `params`, join) and names each other key as `unknown_key`, with what SLayer
+  uses instead where the key is a MetricFlow habit. Reading, this is a warning:
+  SLayer reads the file, so dex does too. Authoring refuses it (below).
 
 Every refusal names the file and the element (`columns['order id'].name`,
 `joins[0].target_model`). One broken file leaves the rest readable: the catalog
@@ -1025,6 +1032,10 @@ opening SLayer's storage:
   both sides have;
 - an edited model's `default_time_dimension` names one of its columns (the reader
   only warns about this; a model dex is about to write is held to more);
+- an edited model carries no key the pinned release does not declare at its
+  level. The reader only warns about one too, and the refusal names the file,
+  the element (`measures['revenue'].agg`) and the release, since SLayer would
+  ignore the key and dex would be writing one that does nothing;
 - an edited model's saved measures parse with SLayer's own formula parser, with
   sibling measures available by bare name. SLayer checks scalar calls inside a
   formula with sqlglot, so without the `[sql]` extra this check is skipped and a

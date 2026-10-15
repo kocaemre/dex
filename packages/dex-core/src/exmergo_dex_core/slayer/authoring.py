@@ -19,9 +19,10 @@ any path that resolves outside the storage root, symlinks included.
 same checks the reader runs (:mod:`.loader`): every model parses as the pinned
 release's current `SlayerModel`, names are unique, each file sits at
 `models/<data_source>/<name>.yaml`, every join resolves within the set onto
-columns both sides have. Authoring holds edited models to two more: a
-`default_time_dimension` has to name a column, where the reader only warns, and
-every saved measure's formula has to parse.
+columns both sides have. Authoring holds edited models to three more: a
+`default_time_dimension` has to name a column and every key has to be a field the
+pinned release declares, where the reader only warns about either, and every
+saved measure's formula has to parse.
 
 **dex owns the configured files.** SLayer's own tooling rewrites model files
 (`slayer serve`, `slayer ingest`, `validate-models --persist-cardinality`, a
@@ -67,6 +68,9 @@ _STORAGE_ONLY = {
     "embeddings.db": "SLayer's search index",
     "memories": "SLayer's memories",
 }
+
+#: Reader warnings that refuse a model this plan edits.
+_STRICT_RULES = frozenset({"unknown_column", "unknown_key"})
 
 #: Said on every conflict this writer reports, because SLayer's own storage is
 #: the likeliest author of a change to a file dex wrote.
@@ -372,15 +376,14 @@ def _why_not_configured(path: str) -> str:
 def _strict_warnings(validated: LoadResult, edited: set[str]) -> list[Diagnostic]:
     """Reader warnings that refuse an authored model.
 
-    The reader reads past a `default_time_dimension` naming no column and says
-    so, because a raw layer should still be readable. A model dex is about to
-    write is held to more: it would be writing the defect.
+    The reader reads past a `default_time_dimension` naming no column, and past
+    a key SLayer does not declare, and says so, because a raw layer should still
+    be readable. A model dex is about to write is held to more: it would be
+    writing the defect.
     """
 
     return [
-        d
-        for d in validated.diagnostics
-        if d.file in edited and d.rule == "unknown_column"
+        d for d in validated.diagnostics if d.file in edited and d.rule in _STRICT_RULES
     ]
 
 

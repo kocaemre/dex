@@ -398,6 +398,220 @@ def test_a_broken_set_is_refused_naming_file_and_element(
     assert not list((root / ".dex").glob("plans/*"))
 
 
+# --- keys the pinned release does not declare (#620) ------------------------------
+
+
+def _with_column(column: dict[str, Any]) -> dict[str, Any]:
+    base = orders()
+    return orders(columns=[*base["columns"][:-1], column])
+
+
+@pytest.mark.parametrize(
+    ("authored", "element"),
+    [
+        pytest.param(orders(owner="analytics"), "owner", id="model"),
+        pytest.param(
+            _with_column({"name": "ordered_at", "type": "TIMESTAMP", "nullable": True}),
+            "columns['ordered_at'].nullable",
+            id="column",
+        ),
+        pytest.param(
+            _with_column(
+                {"name": "ordered_at", "type": "TIMESTAMP", "format": {"style": "x"}}
+            ),
+            "columns['ordered_at'].format.style",
+            id="column-format",
+        ),
+        pytest.param(
+            orders(
+                measures=[{"name": "revenue", "formula": "sum(amount)", "unit": "$"}]
+            ),
+            "measures['revenue'].unit",
+            id="measure",
+        ),
+        pytest.param(
+            orders(
+                aggregations=[
+                    {
+                        "name": "wavg",
+                        "formula": "sum({value} * {weight}) / sum({weight})",
+                        "params": [{"name": "weight", "sql": "amount", "default": 1}],
+                        "kind": "weighted",
+                    }
+                ]
+            ),
+            "aggregations['wavg'].kind",
+            id="aggregation",
+        ),
+        pytest.param(
+            orders(
+                aggregations=[
+                    {
+                        "name": "wavg",
+                        "formula": "sum({value} * {weight}) / sum({weight})",
+                        "params": [{"name": "weight", "sql": "amount", "default": 1}],
+                    }
+                ]
+            ),
+            "aggregations['wavg'].params['weight'].default",
+            id="aggregation-param",
+        ),
+        pytest.param(
+            orders(
+                joins=[
+                    {
+                        "target_model": "customers",
+                        "join_pairs": [["customer_id", "id"]],
+                        "cardinality": "many_to_one",
+                        "relationship": "foreign",
+                    }
+                ]
+            ),
+            "joins[0].relationship",
+            id="join",
+        ),
+    ],
+)
+def test_a_key_slayer_does_not_declare_is_refused_at_any_level(
+    tmp_path, capsys, authored, element
+):
+    """SLayer's own models ignore an unknown key, so it would validate, be
+    written, and do nothing."""
+
+    root = repo(
+        tmp_path,
+        [ORDERS, CUSTOMERS],
+        **{ORDERS: dump(orders()), CUSTOMERS: dump(customers())},
+    )
+
+    rc, refused = plan(capsys, root, "update", {ORDERS: dump(authored)})
+
+    assert rc != 0
+    message = errors(refused)
+    assert "no plan was stored" in message
+    assert f"{ORDERS}: {element}: [unknown_key]" in message, message
+    assert f"SLayer {SLAYER_VERSION}" in message
+    assert not list((root / ".dex").glob("plans/*"))
+
+
+def test_metricflow_habits_are_refused_with_what_slayer_uses_instead(tmp_path, capsys):
+    """The reproduction in #620: the keys an agent brings from MetricFlow."""
+
+    root = repo(
+        tmp_path,
+        [ORDERS, CUSTOMERS],
+        **{ORDERS: dump(orders()), CUSTOMERS: dump(customers())},
+    )
+    authored = orders(
+        entities=[{"name": "order", "type": "primary", "expr": "order_id"}],
+        measures=[
+            {
+                "name": "revenue",
+                "formula": "amount:sum",
+                "agg": "sum",
+                "agg_time_dimension": "ordered_at",
+            }
+        ],
+    )
+
+    rc, refused = plan(capsys, root, "update", {ORDERS: dump(authored)})
+
+    assert rc != 0
+    message = errors(refused)
+    for element, instead in [
+        ("entities", "primary_key: true"),
+        ("measures['revenue'].agg", "amount:sum"),
+        ("measures['revenue'].agg_time_dimension", "default_time_dimension"),
+    ]:
+        assert f"{ORDERS}: {element}: [unknown_key]" in message, message
+        assert instead in message
+    assert not list((root / ".dex").glob("plans/*"))
+
+
+def test_every_field_the_pinned_release_declares_is_accepted(
+    tmp_path, capsys, no_storage_or_warehouse
+):
+    """Including `meta`, and the values SLayer caches on a column."""
+
+    root = repo(
+        tmp_path,
+        [ORDERS, CUSTOMERS],
+        **{ORDERS: dump(orders()), CUSTOMERS: dump(customers())},
+    )
+    authored = orders(
+        description="One row per order.",
+        meta={"owner": "analytics"},
+        columns=[
+            {"name": "order_id", "type": "INT", "primary_key": True},
+            {"name": "customer_id", "type": "INT", "meta": {"pii": False}},
+            {"name": "amount", "type": "DOUBLE", "label": "Amount"},
+            {
+                "name": "ordered_at",
+                "type": "TIMESTAMP",
+                "sampled": "2026-10-01",
+                "sampled_values": ["2026-10-01"],
+                "distinct_count": 31,
+            },
+        ],
+        measures=[{"name": "revenue", "formula": "sum(amount)", "meta": {"k": 1}}],
+        joins=[
+            {
+                "target_model": "customers",
+                "join_pairs": [["customer_id", "id"]],
+                "cardinality": "many_to_one",
+                "meta": {"k": 1},
+            }
+        ],
+    )
+
+    rc, planned = plan(capsys, root, "update", {ORDERS: dump(authored)})
+
+    assert rc == 0, planned["errors"]
+    assert not any("unknown_key" in w for w in planned["warnings"])
+
+
+def test_no_declared_field_reads_as_unknown_at_any_level():
+    """Generated from the pinned models themselves, so a release that adds a
+    field cannot be refused for it."""
+
+    from pydantic import BaseModel
+    from slayer.core.models import SlayerModel
+
+    from exmergo_dex_core.slayer.loader import _unknown_keys
+
+    def nested(annotation: Any) -> list[type[BaseModel]]:
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return [annotation]
+        return [m for arg in getattr(annotation, "__args__", ()) for m in nested(arg)]
+
+    def every_field(owner: type[BaseModel], depth: int = 0) -> dict[str, Any]:
+        raw: dict[str, Any] = {}
+        for name, info in owner.model_fields.items():
+            models = nested(info.annotation) if depth < 4 else []
+            raw[name] = [every_field(models[0], depth + 1)] if models else None
+        return raw
+
+    assert list(_unknown_keys(every_field(SlayerModel), SlayerModel, ())) == []
+
+
+def test_an_unknown_key_in_a_file_the_plan_does_not_edit_only_warns(tmp_path, capsys):
+    """dex refuses to write the defect; it does not refuse to write next to one."""
+
+    root = repo(
+        tmp_path,
+        [ORDERS, CUSTOMERS],
+        **{ORDERS: dump(orders()), CUSTOMERS: dump(customers(owner="crm"))},
+    )
+    revised = dump(
+        orders(measures=[{"name": "revenue", "formula": "sum(amount) / 100"}])
+    )
+
+    rc, planned = plan(capsys, root, "update", {ORDERS: revised})
+
+    assert rc == 0, planned["errors"]
+    assert any(f"{CUSTOMERS}: owner: [unknown_key]" in w for w in planned["warnings"])
+
+
 def test_a_duplicate_model_name_refuses_both_files(tmp_path, capsys):
     other = "models/other/orders.yaml"
     root = repo(

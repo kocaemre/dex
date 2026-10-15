@@ -939,9 +939,11 @@ replace) inlines a literal credential, so no secret ever reaches the diff.
   is writable. The prospective set is validated with the pinned release's own
   `SlayerModel` (current format `version`, unique names, path agreeing with name
   and data source, joins resolving within the set onto columns both sides have)
-  and, for an edited model, a `default_time_dimension` that names a column and
-  saved-measure formulas that parse. Every refusal names the file and the
-  element. Apply writes the authored bytes, all files or none, and a file
+  and, for an edited model, a `default_time_dimension` that names a column, no
+  key the pinned release does not declare at its level (SLayer ignores one, so it
+  would be written and do nothing), and saved-measure formulas that parse. Every
+  refusal names the file, the element, and for an unknown key the pinned
+  release. Apply writes the authored bytes, all files or none, and a file
   SLayer's own storage rewrote after planning is a conflict that says so.
 
 
