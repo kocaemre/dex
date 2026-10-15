@@ -95,3 +95,39 @@ transformation project.
 
 A worked end-to-end example on a local warehouse, for a human reader:
 <https://github.com/exmergo/dex/blob/main/references/ossie-walkthrough.md>.
+
+## SLayer models: `semantic slayer define|update|plan`
+
+Under `semantic.vendor: slayer`, the configured SLayer model files are the
+semantic layer and dex authors them directly. Do not generate them with
+`slayer import-dbt`: it is one-way and drops custom schemas and aliases.
+
+Pass `--edits-file <path|->` with whole model files. Each `path` is written
+exactly as `semantic.slayer.models` lists it, relative to
+`semantic.slayer.base_dir` (`models/<data_source>/<name>.yaml`), and the command
+implies the `semantic_document` kind.
+
+- **The write surface is the configured list.** A datasource file, `priority.yaml`,
+  SLayer's search index or memories, an unconfigured model, and anything outside
+  the storage root are refused. To add a model, add its path with
+  `dex config set semantic.slayer.models ...` first, then `define` it.
+- **The whole prospective set is validated** with the pinned release's own
+  `SlayerModel`, with no warehouse connection and no SLayer storage opened. Write
+  the current format `version` (the refusal names it); keep the name and
+  `data_source` agreeing with the path; make every join's `target_model` a model
+  in the set and every join pair a column on both sides; point
+  `default_time_dimension` at a real column; write saved-measure formulas SLayer's
+  parser accepts (another saved measure may be named bare). Every refusal names
+  the file and the element, so fix exactly that and re-plan.
+- `define` refuses an existing model, `update` a new one, `plan` takes both.
+  Nothing here removes a model or a file, and rename/remove propagation and
+  warehouse grounding are dbt-only.
+- `transform apply` writes your bytes exactly, all files or none.
+
+**dex owns the configured model files; SLayer tooling must not write them.**
+`slayer serve`, `slayer ingest`, `slayer validate-models --persist-cardinality`
+and a storage migration on open all rewrite model files. If one did after you
+planned, apply refuses with a conflict that says so. Tell the user what
+happened, then remake the plan against the current files with
+`semantic slayer plan`. Use `--confirm` only if the user wants SLayer's change
+overwritten.

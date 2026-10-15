@@ -1817,7 +1817,8 @@ def apply(engine: DexEngine, plan_id: str | None = None) -> ApplyResult:
             # caller has to accept before anything is overwritten.
             pending_confirmation=ConfirmationRequest(
                 data={
-                    "hint": (
+                    "hint": outcome.conflict_hint
+                    or (
                         "these files changed after the plan was made (human edits "
                         "are authoritative); re-plan against current state, or "
                         "re-run with --confirm to overwrite deliberately"
@@ -1946,7 +1947,8 @@ def apply_document(
             diffs=outcome.diffs,
             pending_confirmation=ConfirmationRequest(
                 data={
-                    "hint": (
+                    "hint": outcome.conflict_hint
+                    or (
                         "these files differ from what the plan was authored "
                         "against (human edits are authoritative); re-plan against "
                         "this checkout, or re-run with --confirm to overwrite "

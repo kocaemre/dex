@@ -176,6 +176,8 @@ def test_the_extras_are_the_connector_plus_whatever_the_command_needs(
             "slayer",
             ["ossie", "slayer", "semantic-api"],
         ),
+        # A SLayer plan is validated again as `transform apply` writes it.
+        (["transform", "apply"], "slayer", ["slayer"]),
         (["explore", "map", "--use-project"], "slayer", ["slayer"]),
         (["explore", "relationships", "--use-project"], "slayer", ["slayer"]),
         (["explore", "profile", "o", "--use-project"], "slayer", ["slayer"]),
@@ -185,6 +187,7 @@ def test_the_extras_are_the_connector_plus_whatever_the_command_needs(
         (["maintain", "check"], "dbt", ["ossie"]),
         (["explore", "semantic"], "ossie", ["ossie", "semantic-api"]),
         (["explore", "map", "--use-project"], None, []),
+        (["transform", "apply"], "dbt", []),
         # A command that does not read the layer installs nothing for it.
         (["explore", "inventory"], "slayer", []),
         (["explore", "map"], "slayer", []),

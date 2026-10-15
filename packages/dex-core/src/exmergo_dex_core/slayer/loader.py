@@ -19,6 +19,11 @@ would rewrite it, or read fields the pinned release does not know, so the
 version is checked first and anything but the pinned release's current version
 is an error naming both numbers.
 
+**The same checks judge a set that is not on disk yet.**
+:func:`validate_model_contents` takes the text of every model instead of reading
+files, which is how authoring validates the set a plan would leave before it is
+stored, with no file written and no storage opened.
+
 **Problems are collected, not raised.** A file with two problems reports two,
 and a caller on the declaration channel may not raise at all, so every finding
 is a :class:`Diagnostic` naming the file and the element it sits at. A model
@@ -29,8 +34,9 @@ from looking like "this declares nothing".
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -46,7 +52,9 @@ __all__ = [
     "Diagnostic",
     "LoadResult",
     "LoadedModel",
+    "formula_problems",
     "load_models",
+    "validate_model_contents",
 ]
 
 #: The model format version the pinned SLayer release writes. A file carrying
@@ -130,6 +138,31 @@ def load_models(
         result.diagnostics.extend(found)
         if loaded is not None:
             parsed.append(loaded)
+    return _across_set(parsed, models, result)
+
+
+def validate_model_contents(contents: Mapping[str, str]) -> LoadResult:
+    """Judge a set of models given as text, keyed as ``semantic.slayer.models``.
+
+    Every check :func:`load_models` runs, over content that need not exist on
+    disk: authoring validates the set a plan would leave this way. Never raises
+    for a bad model, for the same reason.
+    """
+
+    result = LoadResult()
+    parsed: list[LoadedModel] = []
+    for name, text in contents.items():
+        loaded, found = _parse(text, name)
+        result.diagnostics.extend(found)
+        if loaded is not None:
+            parsed.append(loaded)
+    return _across_set(parsed, list(contents), result)
+
+
+def _across_set(
+    parsed: list[LoadedModel], models: Sequence[str], result: LoadResult
+) -> LoadResult:
+    """Finish a load: the checks that need every model, then the warnings."""
 
     # A file that failed before its name could be read still names its model in
     # its path, so a join to it is reported as unreadable rather than unknown.
@@ -171,6 +204,14 @@ def _resolve(
                 f"'{name}' resolves outside {what} ({resolved}); dex reads SLayer "
                 "models only from semantic.slayer.base_dir inside the repository",
             )
+    if resolved.relative_to(storage).parts[:1] != ("models",):
+        # Inside the storage root is not enough: a model symlinked to a
+        # datasource file would hand its credentials to the parser.
+        return refusal(
+            "confinement",
+            f"'{name}' resolves to {resolved}, which is not under the storage "
+            "root's models/ directory; dex reads SLayer models only from there",
+        )
     if not resolved.is_file():
         return refusal("missing", f"no such SLayer model file: '{name}'")
     return resolved, None
@@ -179,17 +220,31 @@ def _resolve(
 def _read(path: Path, name: str) -> tuple[LoadedModel | None, list[Diagnostic]]:
     """Parse and validate one file, collecting every problem with it."""
 
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, _refusal(
+            name, "(root)", "unreadable", f"could not read the file: {exc}"
+        )
+    return _parse(text, name)
+
+
+def _refusal(name: str, element: str, rule: str, message: str) -> list[Diagnostic]:
+    return [
+        Diagnostic(
+            file=name, element=element, rule=rule, severity=ERROR, message=message
+        )
+    ]
+
+
+def _parse(text: str, name: str) -> tuple[LoadedModel | None, list[Diagnostic]]:
+    """Parse and validate one model's text, collecting every problem with it."""
+
     def refusal(element: str, rule: str, message: str) -> list[Diagnostic]:
-        return [
-            Diagnostic(
-                file=name, element=element, rule=rule, severity=ERROR, message=message
-            )
-        ]
+        return _refusal(name, element, rule, message)
 
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError) as exc:
-        return None, refusal("(root)", "unreadable", f"could not read the file: {exc}")
+        raw = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         # `yaml.YAMLError` descends from `Exception` rather than `ValueError`, so
         # it is caught by name.
@@ -417,6 +472,53 @@ def _warnings(loaded: LoadedModel) -> list[Diagnostic]:
             )
         ]
     return []
+
+
+def formula_problems(loaded: LoadedModel) -> list[Diagnostic] | None:
+    """Every saved measure whose formula SLayer's own parser refuses.
+
+    Parsed the way SLayer's dbt converter checks a measure it is about to keep:
+    with the model's custom aggregations, and every other saved measure available
+    for a bare-name reference, so a formula naming a sibling measure parses and
+    one naming a missing measure does not. ``SlayerModel`` itself does not parse
+    a formula, which is why this is a separate check.
+
+    ``None`` means the check did not run: SLayer validates scalar calls inside a
+    formula with sqlglot, the ``[sql]`` extra, and without it the parser would
+    reject sound formulas, so a caller says it skipped rather than reporting
+    either verdict.
+    """
+
+    if find_spec("sqlglot") is None:
+        return None
+    from slayer.core.formula import parse_formula
+
+    model = loaded.model
+    aggregations = frozenset(a.name for a in model.aggregations)
+    named = {m.name: m.formula for m in model.measures if m.name}
+    found: list[Diagnostic] = []
+    for index, measure in enumerate(model.measures):
+        others = {k: v for k, v in named.items() if k != measure.name}
+        try:
+            parse_formula(
+                measure.formula, extra_agg_names=aggregations, named_measures=others
+            )
+        except (ValueError, RecursionError) as exc:
+            label = measure.name or index
+            found.append(
+                Diagnostic(
+                    file=loaded.file,
+                    element=f"measures[{label!r}].formula",
+                    rule="formula",
+                    severity=ERROR,
+                    message=(
+                        f"model '{model.name}' saves measure '{label}' with "
+                        f"formula {measure.formula!r}, which SLayer's formula "
+                        f"parser refuses: {exc}"
+                    ),
+                )
+            )
+    return found
 
 
 def _element(raw: dict[str, Any], loc: Sequence[Any]) -> str:

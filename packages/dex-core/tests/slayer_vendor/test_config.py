@@ -66,15 +66,15 @@ def test_slayer_is_a_vendor_with_one_local_deployment():
     assert SEMANTIC_DEPLOYMENTS["slayer"] == ("local",)
 
 
-def test_slayer_has_its_own_semantic_source_and_no_authoring_route_yet():
-    """The source replaces MetricFlow as the catalog; `semantic slayer` authoring
-    is not registered until it has a route of its own, so it cannot fall into
-    the Ossie validator."""
+def test_slayer_has_its_own_semantic_source_and_authoring_route():
+    """The source replaces MetricFlow as the catalog, and `semantic slayer`
+    authoring is registered now that the layer validates its own models (#599),
+    so it reaches the SLayer validator rather than the Ossie one."""
 
     assert SEMANTIC_SOURCE_FACTORIES["slayer"] == (
         "exmergo_dex_core.slayer.project:build_semantic_layer"
     )
-    assert "slayer" not in SEMANTIC_DOCUMENT_AUTHORING
+    assert "slayer" in SEMANTIC_DOCUMENT_AUTHORING
     assert set(SEMANTIC_DOCUMENT_AUTHORING) <= set(SEMANTIC_SOURCE_FACTORIES)
 
 

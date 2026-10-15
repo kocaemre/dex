@@ -155,8 +155,8 @@ is not described here.
   spellings, and the edit is the user's. On ClickHouse nullability is part of the
   type, so a column that starts accepting nulls is reported as a retype.
 - With no editable dbt project, every proposal is advisory and no plan is stored.
-  Authoring into a native semantic layer is `semantic ossie` in the transform
-  skill, never this command.
+  Authoring into a native semantic layer is `semantic ossie` or
+  `semantic slayer` in the transform skill, never this command.
 
 ### Cost
 

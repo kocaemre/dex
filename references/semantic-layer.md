@@ -1,7 +1,8 @@
 # Querying the semantic layer (`explore semantic`)
 
 dex can author a semantic layer (`transform` / `semantic define|update` for dbt,
-`semantic ossie define|update` for native Apache Ossie documents) and detect drift
+`semantic ossie define|update` for native Apache Ossie documents, `semantic slayer
+define|update` for SLayer model files) and detect drift
 in it (`maintain semantic`). `explore semantic` is the third piece: it *queries*
 the layer, so an agent can discover metrics and, where the layer defines a
 runtime, run governed metric queries. Three backends answer the same commands
@@ -941,6 +942,64 @@ so a re-profile is not a definition change), each saved measure, each declared
 key, and each join with its full ordered pairs. The layer-neutral detection then
 runs on it unchanged: a definition added, removed or changed, and a dimension,
 key or join naming a column that is gone.
+
+### Authoring SLayer models
+
+The repository's SLayer model files are the source of truth, and dex writes them
+through plan and apply like every other edit. They are not generated from dbt with
+`slayer import-dbt`, which is one-way and turns dbt references into bare model
+names, losing custom schemas and aliases.
+
+Use `semantic slayer define|update|plan <intent> --edits-file <path|->`. Each edit
+is one whole model file, and `kind` may be omitted because the command implies
+`semantic_document`. A path is written exactly as `semantic.slayer.models` lists
+it, relative to `semantic.slayer.base_dir`:
+
+```json
+{"edits": [{"path": "models/warehouse/orders.yaml", "content": "..."}]}
+```
+
+The write surface is that list and nothing else. A datasource file (it carries
+connection credentials), `priority.yaml`, SLayer's search index and memories, a
+model file nobody configured, and a path outside the storage root are refused, as
+is a configured model symlinked anywhere but the storage root's `models/`. To add
+a model, add its path to `semantic.slayer.models` first (`dex config set`), then
+`define` it: a configured file may be absent until then.
+
+dex overlays the edits on the other configured models and validates the whole set
+they would leave before storing anything, with no warehouse connection and without
+opening SLayer's storage:
+
+- every model parses as the pinned release's current `SlayerModel`. An authored
+  file must carry the current `version`; a lower one is refused, naming the
+  version dex expects, because SLayer would rewrite the file on its next save;
+- names are unique, and each file sits at `models/<data_source>/<name>.yaml`
+  agreeing with the model inside;
+- every join's `target_model` is in the set, and every join pair names a column
+  both sides have;
+- an edited model's `default_time_dimension` names one of its columns (the reader
+  only warns about this; a model dex is about to write is held to more);
+- an edited model's saved measures parse with SLayer's own formula parser, with
+  sibling measures available by bare name. SLayer checks scalar calls inside a
+  formula with sqlglot, so without the `[sql]` extra this check is skipped and a
+  note says so.
+
+Every refusal names the file and the element. `define` refuses a model that
+exists, `update` one that does not, and `plan` reports both under `defined` and
+`updated`. These commands remove no model and no file.
+
+`transform apply` re-hashes every target, validates the set again, and writes the
+authored bytes exactly (comments, key order and line endings included), all files
+or none. **dex owns the configured model files.** SLayer's own tooling rewrites
+model files it saves (`slayer serve`, `slayer ingest`,
+`slayer validate-models --persist-cardinality`, a storage migration on open), and
+a file rewritten after planning no longer matches the plan's pin. The apply
+refuses, and the conflict says SLayer's storage is the likely author and that the
+plan has to be remade with `semantic slayer plan`; `--confirm` overwrites the
+change deliberately instead. Keep SLayer tooling from writing the files dex owns.
+
+Not in this release: propagating a rename or a removal, and grounding authored
+models against the warehouse or the exploration cache. Both stay dbt-only.
 
 ## Internal architecture
 

@@ -20,7 +20,7 @@ what a source can do instead of asking what it is.
 Semantic Layer's service coordinates, reachable as ``engine.semantic_source``.
 :class:`SemanticSourceContext` here is what a *reader* is built from, reachable
 as ``engine.semantic_catalog_source()``. ``SemanticSourceFile`` in
-:mod:`.ossie.authoring` is one document's bytes and hash. Different concepts,
+:mod:`.edits` is one semantic document's bytes and hash. Different concepts,
 adjacent words; the qualifier in each name is the part that matters.
 
 A leaf module, like :mod:`.semantic_catalog` beside it: the protocol types are

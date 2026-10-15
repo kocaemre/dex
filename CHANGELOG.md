@@ -47,6 +47,30 @@ tag releases both in lockstep, so entries below are keyed by the engine version.
   (`sampled_values`) are never read. The skill wrapper now also installs
   `[slayer]` for `explore semantic` and for `explore` commands run with
   `--use-project` where the config names that vendor.
+- **`semantic slayer define|update|plan`: SLayer models authored through
+  plan/apply** ([#599](https://github.com/exmergo/dex/issues/599)). The
+  repository's SLayer model files are now written by dex as reviewable plans
+  rather than generated from dbt. Edits are whole files of the
+  `semantic_document` kind, keyed exactly as `semantic.slayer.models` names them;
+  a datasource file, `priority.yaml`, SLayer's search index or memories, an
+  unconfigured model, a path outside the storage root, and a model symlinked away
+  from `models/` are refused. The whole prospective set is validated with the
+  pinned `SlayerModel` before the plan is stored, with no warehouse connection
+  and no SLayer storage opened: the current format version (a stale one is
+  refused naming the version expected), unique names, path agreeing with name and
+  data source, joins resolving onto columns both sides have, and, for an edited
+  model, a `default_time_dimension` that names a column and saved-measure
+  formulas that SLayer's own parser accepts (a named skip without `[sql]`). Each
+  refusal names the file and the element. `transform apply` writes the authored
+  bytes exactly, staging every file before moving any into place, and a file
+  SLayer's own tooling rewrote after planning is a conflict whose hint says so.
+  The format-neutral `ApplyResult` gains an optional `conflict_hint` for that
+  message, and `SemanticSourceFile`/`SemanticDocumentView` move from
+  `ossie.authoring` to `edits` so both vendors share them. The skill wrapper now
+  installs `[slayer]` for `transform apply` where the config names that vendor.
+  The SLayer reader also now refuses a configured model that resolves outside the
+  storage root's `models/` directory, so a symlink to a datasource file inside the
+  storage root never reaches the parser.
 
 - **Manifests for Copilot CLI, Cursor, Kiro and Gemini CLI, and a listing name and
   links in the Claude Code manifest** ([#607]). Copilot CLI, Cursor Marketplace and

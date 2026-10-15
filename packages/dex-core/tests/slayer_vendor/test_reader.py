@@ -750,3 +750,24 @@ def test_maintain_fingerprints_the_slayer_layer(tmp_path):
     assert isinstance(built, SemanticSnapshotSource)
     layer = _semantic_layer(engine, None)
     assert {m.name for m in layer.semantic_models} == {"orders", "customers"}
+
+
+def test_a_model_symlinked_to_a_datasource_file_is_not_read(tmp_path):
+    """Inside the storage root is not enough: a datasource file carries
+    credentials, and a model path symlinked to one must not reach the parser."""
+
+    secret = tmp_path / BASE / "datasources" / "wh.yaml"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("password: hunter2\n", encoding="utf-8")
+    link = tmp_path / BASE / "models" / "wh" / "orders.yaml"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(secret)
+
+    loaded = SlayerSemanticLayer.from_context(
+        context(tmp_path, ["models/wh/orders.yaml"])
+    )._load()
+
+    assert loaded.models == []
+    (diagnostic,) = loaded.diagnostics
+    assert diagnostic.rule == "confinement"
+    assert "hunter2" not in diagnostic.render()

@@ -86,7 +86,8 @@ https://github.com/exmergo/dex/tree/main/packages/dex-core.
    use `transform rename` / `transform remove` instead of assembling edits. For a
    derived column several models need, ask `transform place` where it belongs.
    For the semantic layer, use `semantic define|update|plan` (dbt) or
-   `semantic ossie define|update|plan` (native Ossie); read
+   `semantic ossie define|update|plan` (native Ossie), or
+   `semantic slayer define|update|plan` (SLayer model files); read
    `${CLAUDE_SKILL_DIR}/references/semantic-layer.md` first.
 4. **Read the plan** (rules below), then `transform apply <plan-id>`.
 5. **Build and verify:** `transform build --target dev --verify`.

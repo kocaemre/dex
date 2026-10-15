@@ -8,14 +8,19 @@ written exactly as authored. Other configured documents are not touched.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from ..diffs import file_diff
-from ..edits import ApplyResult, Conflict, content_hash
+from ..edits import (
+    ApplyResult,
+    Conflict,
+    SemanticDocumentView,
+    SemanticSourceFile,
+    content_hash,
+)
 from ..errors import ProjectError
 from .loader import ERROR, LoadedDocument, validate_document_contents
 
@@ -23,21 +28,6 @@ if TYPE_CHECKING:
     from ..cache import DexCache
     from ..transform.plans import PlanEdit
     from .project import OssieSemanticLayer
-
-
-@dataclass(frozen=True)
-class SemanticSourceFile:
-    path: str
-    content: str
-    sha256: str
-
-
-@dataclass(frozen=True)
-class SemanticDocumentView:
-    """The configured semantic-document keyspace used for hash pinning."""
-
-    root: str
-    files: dict[str, SemanticSourceFile]
 
 
 def load_edit_view(layer: OssieSemanticLayer) -> SemanticDocumentView:

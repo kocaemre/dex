@@ -125,6 +125,7 @@ _METHOD_NAMES = {
     ("connect", "test"): "connect_test",
     ("explore", "semantic"): "semantic_list",
     ("semantic", "ossie"): "semantic_ossie",
+    ("semantic", "slayer"): "semantic_slayer",
     ("maintain", "schema"): "schema_drift",
     ("maintain", "volume"): "volume_drift",
     ("maintain", "grain"): "grain_drift",

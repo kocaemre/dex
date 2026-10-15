@@ -11,8 +11,9 @@ It implements the two source capabilities in :mod:`..semantic_source`:
 :class:`~..semantic_source.SemanticCatalogSource` for the read catalog and
 :class:`~..semantic_source.SemanticSnapshotSource` for the drift fingerprint,
 plus the declaration channel (`declared_definitions()`) that carries declared
-keys and joins to exploration. What maps and what does not is in
-:mod:`.catalog`.
+keys and joins to exploration, and :class:`~..edits.SemanticEditTarget` for
+`semantic slayer define|update|plan`. What maps and what does not is in
+:mod:`.catalog`; what authoring accepts is in :mod:`.authoring`.
 
 SLayer never touches the warehouse under dex, and nothing here opens SLayer
 storage: the coordinates are paths to committed model files and nothing else.
@@ -28,12 +29,14 @@ import and run every non-SLayer command.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from ..edits import SemanticEditValidation
 from ..errors import ConfigurationError, ProjectError, RepoRootRequiredError
 from .dependency import SlayerDependencyError, ensure_available
 
 if TYPE_CHECKING:
+    from ..edits import ApplyResult, SemanticDocumentView
     from ..maintain.snapshot import SemanticLayerSnapshot
     from ..project_definitions import ProjectDefinitions
     from ..semantic_catalog import SemanticCatalogView
@@ -205,6 +208,48 @@ class SlayerSemanticLayer:
                 notes=[f"SLayer models could not be read: {exc}"]
             )
         return snapshot_mod.semantic_layer(loaded, connector=self.connector)
+
+    # --- native semantic-document authoring ------------------------------------
+
+    def semantic_edit_view(self) -> SemanticDocumentView:
+        """The configured model files' bytes and hashes, keyed as configured."""
+
+        from .authoring import load_edit_view
+
+        return load_edit_view(self)
+
+    def semantic_editing_surface(self) -> list[str]:
+        """Exactly the configured model files, relative to the storage root.
+
+        No directory is listed, so nothing beside a configured model, a
+        datasource file least of all, is inside the surface.
+        """
+
+        return list(self.models)
+
+    def write_semantic_edits(
+        self, edits: Any, *, confirmed: bool = False
+    ) -> ApplyResult:
+        """Write the authored bytes, all or none, refusing a stale pin."""
+
+        ensure_available()
+        from .authoring import write_edits
+
+        return write_edits(self, list(edits), confirmed=confirmed)
+
+    def validate_semantic_edits(
+        self, edits: Any, mode: str, *, cache: Any = None
+    ) -> SemanticEditValidation:
+        """Validate the models these edits would leave, as SLayer reads them.
+
+        ``cache`` is accepted and not read: grounding authored models against
+        the warehouse is not part of this release.
+        """
+
+        ensure_available()
+        from .authoring import validate_plan
+
+        return validate_plan(self, list(edits), mode)
 
     def _load(self) -> LoadResult:
         if self._loaded is None:

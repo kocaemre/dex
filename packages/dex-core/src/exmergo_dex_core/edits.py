@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
@@ -49,6 +50,11 @@ class ApplyResult(BaseModel):
     written: list[str] = Field(default_factory=list)
     diffs: list[dict[str, Any]] = Field(default_factory=list)
     conflicts: list[Conflict] = Field(default_factory=list)
+    #: What the writer knows about why its files could have changed since
+    #: planning, said where the conflict is reported. ``None`` leaves the
+    #: generic "human edits are authoritative" reading, which is right for a
+    #: file only people edit and wrong for one a vendor's own tooling rewrites.
+    conflict_hint: str | None = None
 
 
 def content_hash(text: str) -> str:
@@ -63,6 +69,27 @@ class SourceFileView(Protocol):
 class EditView(Protocol):
     root: str
     files: Mapping[str, SourceFileView]
+
+
+@dataclass(frozen=True)
+class SemanticSourceFile:
+    """One configured semantic document as bytes to be pinned."""
+
+    path: str
+    content: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class SemanticDocumentView:
+    """A semantic layer's configured documents, keyed as its surface names them.
+
+    ``root`` is the directory the keys are relative to, which is what a plan
+    records as its project directory.
+    """
+
+    root: str
+    files: dict[str, SemanticSourceFile]
 
 
 class SemanticEditValidation(BaseModel):

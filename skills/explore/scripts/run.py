@@ -270,12 +270,13 @@ _OSSIE_READING_COMMANDS = (
 # repository, so it follows the config instead: `semantic slayer` always takes it,
 # and a command that reads the semantic layer takes it only where
 # `semantic.vendor` is `slayer` (read by `_semantic_vendor_from_config`): every
-# `maintain` command, `explore semantic`, and an `explore` command asked to fold
-# the layer in with `--use-project`. Where the read misses, the engine refuses by
+# `maintain` command, `explore semantic`, `transform apply` (a SLayer plan is
+# validated again as it is written), and an `explore` command asked to fold the
+# layer in with `--use-project`. Where the read misses, the engine refuses by
 # name with the install line rather than failing on an import.
 _SLAYER_COMMANDS = (("semantic", "slayer"),)
 _SLAYER_BACKED_GROUPS = ("maintain",)
-_SLAYER_BACKED_COMMANDS = (("explore", "semantic"),)
+_SLAYER_BACKED_COMMANDS = (("explore", "semantic"), ("transform", "apply"))
 _SLAYER_BACKED_FLAG = "--use-project"
 _SLAYER_VENDOR = "slayer"
 

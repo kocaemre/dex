@@ -318,6 +318,11 @@ dex semantic ossie define|update|plan
                                   -> native Ossie whole-document edits as diffs; limited to the exact
                                      files in semantic.ossie.files, validated as one prospective
                                      layer, and applied atomically with transform apply
+dex semantic slayer define|update|plan
+                                  -> SLayer model files as whole-file diffs; limited to the exact
+                                     files in semantic.slayer.models, validated as one prospective
+                                     set with SLayer's own model, and applied atomically with
+                                     transform apply
 dex maintain snapshot [--project-only]
                                   -> capture/refresh the known-good baseline in .dex/snapshot.json;
                                      --project-only re-fingerprints only project layers and carries the
@@ -924,6 +929,16 @@ replace) inlines a literal credential, so no secret ever reaches the diff.
   before storing anything. It writes the accepted content byte-for-byte, with
   no YAML/JSON reformatting, and never changes a configured document absent from
   the payload. File removal is not part of this command.
+- `semantic slayer define|update|plan` is the same route for SLayer model files.
+  Each edit is one whole model file keyed as `semantic.slayer.models` names it,
+  relative to `semantic.slayer.base_dir`, and nothing else under the storage root
+  is writable. The prospective set is validated with the pinned release's own
+  `SlayerModel` (current format `version`, unique names, path agreeing with name
+  and data source, joins resolving within the set onto columns both sides have)
+  and, for an edited model, a `default_time_dimension` that names a column and
+  saved-measure formulas that parse. Every refusal names the file and the
+  element. Apply writes the authored bytes, all files or none, and a file
+  SLayer's own storage rewrote after planning is a conflict that says so.
 
 
 Skill-to-subcommand mapping: `explore` fronts `connect`/`explore`; `transform`

@@ -798,6 +798,14 @@ _SUBCOMMAND_PARITY: dict[tuple[str, str | None], dict] = {
             "edits_file": _TRANSLATED,
         },
     },
+    ("semantic", "slayer"): {
+        "method": "semantic_slayer",
+        "args": {
+            "mode": "mode",
+            "argument": _TRANSLATED,
+            "edits_file": _TRANSLATED,
+        },
+    },
     ("maintain", "snapshot"): {
         "method": "snapshot",
         "args": {"project_only": "project_only"},
