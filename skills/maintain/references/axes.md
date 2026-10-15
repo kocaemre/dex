@@ -139,6 +139,40 @@ proposed as though nothing declared it.
   connector's own spelling (Snowflake reports `NUMBER(38,0)` and `NUMBER(10,2)`
   both as `FIXED`), so the proposal names both spellings.
 
+## SLayer layers (`semantic.vendor: slayer`)
+
+Every axis runs on a SLayer layer, and none opens a SLayer datasource or SLayer
+storage: each reads the configured model files and the metadata dex captured
+through its own connection. The wrapper installs the `[slayer]` extra for every
+`maintain` command where the vendor is `slayer`; without it a command refuses
+with `reason: prerequisite` and names the install.
+
+| Axis | On SLayer |
+|---|---|
+| `snapshot` | fingerprints each model (minus the values SLayer caches), each saved measure, each declared key, and each join with its ordered pairs and `cardinality`; records the vendor, the SLayer release and the model format version |
+| `schema` | adds the four `declared_*` codes, SLayer's `validate-models` rules on dex's metadata. A model backed by `sql` or `source_queries` is named as not compared |
+| `volume` | unchanged: it reads the warehouse, not the layer |
+| `grain` | measures every `primary_key` (a composite one whole) and `unique` column, and every join's declared `cardinality` (`join_cardinality_exceeded`); a join with none is named in `warnings` as unchecked |
+| `semantic` | definition drift free as everywhere; the dimension-cardinality half needs a `model_ref`, which SLayer has none of, so it is free and offers no scan |
+| `reconcile` | stores the `declared_*` removals as a second plan, `data.semantic_plan_id`, through `semantic slayer update`. A whole model is never removed; that and a type conflict's alternative stay advisory |
+| `verify` | checks the dbt project only; SLayer's declared keys are measured by `grain`, not here |
+
+What SLayer does not declare is not drift: it has no entities, no measures in
+MetricFlow's sense (a saved measure is a formula), no per-measure time
+dimension, and no `model_ref`. Read `unavailable` rather than reporting an
+absent element kind.
+
+Two things look like drift and are not:
+
+- **A format-version mismatch in a file.** The reader refuses a model file in
+  any format `version` but the pinned release's current one, names it in
+  `warnings`, and its definitions come back as `definition_removed` because the
+  file was not read. Repair the file with `semantic slayer update`, then re-run.
+- **A release or format upgrade of the layer.** Reported once as
+  `semantic_format_changed`, with definitions not compared by content until
+  `maintain snapshot` baselines the new format. Added and removed definitions are
+  still reported.
+
 ## What each axis costs
 
 | Axis | Cost |

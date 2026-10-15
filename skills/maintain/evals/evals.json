@@ -21,7 +21,10 @@
       "The shipped_at column in fct_orders is empty and it should not be.",
       "Check my models against the warehouse.",
       "There are duplicates in my fact table and I do not know where they come from.",
-      "Diagnose why the accepted_values test on order_status fails."
+      "Diagnose why the accepted_values test on order_status fails.",
+      "Did my SLayer models drift from the warehouse?",
+      "A SLayer join started fanning out and the revenue measure doubled. Why?",
+      "We upgraded SLayer and maintain says every model was removed. What happened?"
     ],
     "negative": [
       "What's in this warehouse and which tables matter?",
@@ -32,7 +35,8 @@
       "I just rewrote stg_orders and now the not_null test fails. Fix my SQL.",
       "Add a revenue metric to my Ossie semantic model.",
       "Rewrite fct_revenue so revenue is net of refunds.",
-      "Is this data any good?"
+      "Is this data any good?",
+      "Add a revenue measure to the orders model in my SLayer semantic layer."
     ]
   },
   "evals": [
@@ -73,6 +77,20 @@
         "New categorical dimension values and changed metric/measure definitions are surfaced",
         "Human dbt edits are authoritative by construction; conflicts surface as a diff and ask, never a silent overwrite",
         "The proposed reconciliation is valid MetricFlow YAML in the existing semantic model"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Our semantic layer is SLayer. A source column was dropped and the orders-to-customers join may be fanning out. Check the layer against the warehouse and propose fixes.",
+      "expected_output": "A maintain sweep against the .dex/ snapshot reporting SLayer's declared schema findings and any join cardinality breach, with the removals stored as a separate SLayer plan under `data.semantic_plan_id`; nothing applied.",
+      "files": [],
+      "assertions": [
+        "Drives `maintain check` (or the schema and grain axes) with the [slayer] extra selected by the wrapper, and reads the envelope rather than diffing files by hand",
+        "Never opens a SLayer datasource or runs `slayer validate-models`; the declared_* findings come from dex's own metadata",
+        "A join with no declared cardinality is relayed as unchecked, not as passing",
+        "A model file refused for its format version is relayed as unreadable, not reconciled as removed definitions",
+        "Does not report the absence of entities, MetricFlow measures, or per-measure time dimensions as drift",
+        "Relays both reconcile plan ids when a SLayer plan is stored; each is applied with `transform apply`, never silently"
       ]
     }
   ]

@@ -1,6 +1,6 @@
 ---
 name: maintain
-description: 'Use this to find out whether an existing dbt project or semantic layer (dbt or Apache Ossie) is correct against its warehouse, and if not, why. `maintain verify` checks the project as it stands; against a .dex/ snapshot, `maintain check` finds schema, volume, grain, and semantic drift and `maintain reconcile` proposes the fix. Reach for it whenever an existing project is suspected wrong, whether or not anything is known to have changed: "this model is wrong, work out why", "the numbers look too high", "some rows are missing", "this column is empty", "duplicates in my fact table", "the project is broken", "diagnose why this test fails", "a test fails and nobody changed the model", "the dashboard moved but the code did not", "did anything drift", "the row count dropped", "the metric definition changed". Read-only; fixes come back as reviewable diffs and never overwrite hand-written work. Writing the fix, or repairing a model you just edited, is transform''s; a data question with no project is explore''s.'
+description: 'Use this to find out whether an existing dbt project or semantic layer (dbt, Ossie or SLayer) is correct against its warehouse, and if not, why. `maintain verify` checks the project as it stands; against a .dex/ snapshot, `maintain check` finds schema, volume, grain, and semantic drift and `maintain reconcile` proposes the fix. Reach for it whenever an existing project is suspected wrong, whether or not anything is known to have changed: "this model is wrong, work out why", "the numbers look too high", "some rows are missing", "this column is empty", "duplicates in my fact table", "the project is broken", "diagnose why this test fails", "a test fails and nobody changed the model", "the dashboard moved but the code did not", "did anything drift", "the row count dropped", "the metric definition changed". Read-only; fixes come back as reviewable diffs and never overwrite hand-written work. Writing the fix, or repairing a model you just edited, is transform''s; a data question with no project is explore''s.'
 compatibility: 'Needs a local shell and uv. On first use, uv downloads the exmergo-dex-core engine from PyPI at the version scripts/run.py pins. Runs in Claude Code or another agent that loads Agent Skills and has a shell, not in claude.ai chat.'
 ---
 
@@ -124,9 +124,21 @@ is not described here.
 - `semantic_format_changed` or `semantic_vendor_changed` means the definitions
   were not compared by content, because the reader changed. Re-snapshot once the
   upgrade is accepted, rather than reading the quiet definition diff as clean.
+- On a SLayer layer, a model file written in another format `version` is refused
+  by the reader and named in `warnings`, and every definition in it then comes
+  back as `definition_removed`. Nothing was removed: the file could not be read.
+  Never reconcile those as removals; the fix is the file rewritten in the
+  current `version` with `semantic slayer update` (transform skill).
 - `join_cardinality_exceeded` means a join's declared arity does not hold, so
   measures across it are inflated. A join declaring no cardinality is in
-  `warnings` as unchecked, not passed.
+  `warnings` as unchecked, not passed: relay it as undetermined, and suggest
+  declaring the `cardinality` the user expects so the next run measures it.
+- SLayer's own schema findings (`declared_column_missing`,
+  `declared_type_conflict`, `declared_relation_missing`,
+  `declared_dependency_dropped`) are SLayer's `validate-models` rules run on
+  dex's metadata. Do not run `slayer validate-models` to confirm them: it reads
+  through SLayer's datasource credentials, and opening SLayer's storage can
+  migrate and rewrite the model files dex owns.
 - On `maintain verify`, read `data.suppressed` before reading an empty
   `data.findings` as a clean bill. A project that does not compile suppresses
   every other check. Row population is conservative by design, so a quiet answer
