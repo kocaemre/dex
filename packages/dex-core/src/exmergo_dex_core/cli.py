@@ -408,6 +408,12 @@ _SUBCOMMAND_HELP: dict[tuple[str, str], tuple[str, str]] = {
         "Validate whole Ossie documents at the paths semantic.ossie.files "
         "configures, then store a plan. Needs the [ossie] extra. Repo-only.",
     ),
+    ("semantic", "slayer"): (
+        "plan whole-file edits to the configured SLayer model files",
+        "Validate whole SLayer model files at the paths semantic.slayer.models "
+        "configures, with SLayer's own model, then store a plan. Needs the "
+        "[slayer] extra. Repo-only.",
+    ),
     ("maintain", "snapshot"): (
         "capture the known-good baseline in .dex/snapshot.json",
         "Pin the current map and fingerprint the project layers as the "
