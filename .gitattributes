@@ -1,0 +1,5 @@
+# Byte-pinned files. Each is hashed (by tests, by the loader at runtime, and in
+# the published wheel), so it must be the same bytes in every checkout. Without
+# this, a Windows checkout with core.autocrlf=true converts it to CRLF and the
+# recorded hash no longer matches.
+packages/dex-core/src/exmergo_dex_core/ossie/schema/ossie-schema.json -text
