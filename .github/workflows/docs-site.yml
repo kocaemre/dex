@@ -1,0 +1,228 @@
+name: Docs site
+
+# Builds and validates the documentation site, and on a release publishes it.
+#
+# The site is assembled by scripts/build_docs_site.py from docs/, references/,
+# the CLI parser and CHANGELOG.md, then pushed as one generated commit to the
+# `docs-site` branch, which Mintlify serves. `main` never holds the assembled
+# pages: they are transformed copies of references/, and committing them would
+# double every reference diff and break the documentation policy tests, which
+# allow each policy statement in exactly one file.
+#
+# When it runs:
+#   - on a pull request or a push to main touching the sources: build and
+#     validate only, so a broken link or an MDX parse error fails review.
+#   - from release.yml, after PyPI publish: build, validate, deploy. Docs never
+#     go live for a release that failed to publish, and they always describe
+#     what `pip install` gives you.
+#   - by hand (workflow_dispatch): publish the newest final release tag, or any
+#     ref with allow_untagged (bootstrap or rollback only).
+#
+# One-time setup (a maintainer):
+#   - Mintlify GitHub App installed on this repository only.
+#   - Mintlify project Git settings: repository exmergo/dex, branch `docs-site`,
+#     docs at the branch root (no subdirectory), custom domain docs.exmergo.com.
+#   - A `docs-site` GitHub environment whose deployment rule allows `main` and
+#     `v*` tags, and a ruleset on the `docs-site` branch blocking deletion.
+#   - Never edit `docs-site` or use Mintlify's web editor: every deploy replaces
+#     the branch, so an edit there is lost on the next release.
+#   - Bootstrap before the first release: dispatch this workflow from main with
+#     allow_untagged, knowing it publishes unreleased docs.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      deploy:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      ref:
+        type: string
+        default: ""
+        description: "Tag to publish; empty means the newest final release tag"
+      allow_untagged:
+        type: boolean
+        default: false
+        description: "Publish a ref that is not the newest final tag (bootstrap or rollback only)"
+  pull_request:
+    branches: [main]
+    paths: &sources
+      - docs/**
+      - references/**
+      - CHANGELOG.md
+      - scripts/build_docs_site.py
+      - scripts/check_no_em_dashes.py
+      - packages/dex-core/src/exmergo_dex_core/cli.py
+      - packages/dex-core/src/exmergo_dex_core/config.py
+      - .github/workflows/docs-site.yml
+  push:
+    branches: [main]
+    paths: *sources
+
+permissions:
+  contents: read
+
+env:
+  # The single source of the Mintlify CLI version. Dependabot does not track npm
+  # here, so moving it is a deliberate edit, made on this job's evidence.
+  MINT_VERSION: "4.2.994"
+  DO_NOT_TRACK: "1"
+  MINTLIFY_TELEMETRY_DISABLED: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: docs-site-build-${{ github.event.pull_request.number || inputs.ref || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    outputs:
+      ref: ${{ steps.decide.outputs.ref }}
+      sha: ${{ steps.decide.outputs.sha }}
+      deploy: ${{ steps.decide.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Every tag, so "the newest final release" can be computed.
+          fetch-depth: 0
+      # Inputs arrive through env and are never interpolated into the script.
+      - name: Decide what to build and whether it ships
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          CALL_REF: ${{ inputs.ref }}
+          CALL_DEPLOY: ${{ inputs.deploy }}
+          ALLOW_UNTAGGED: ${{ inputs.allow_untagged }}
+        run: |
+          set -euo pipefail
+          newest=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          deploy=false
+          release=""
+          ref=""
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            ref="${CALL_REF:-$newest}"
+            if [ "$ref" = "$newest" ]; then
+              deploy=true
+              release="$ref"
+            elif [ "$ALLOW_UNTAGGED" = "true" ]; then
+              deploy=true
+              echo "::warning::Publishing ${ref}, which is not the newest final release (${newest})."
+            else
+              echo "::error::${ref} is not the newest final release (${newest}). Set allow_untagged to publish it anyway."
+              exit 1
+            fi
+          elif [ "$CALL_DEPLOY" = "true" ]; then
+            ref="$CALL_REF"
+            if ! printf '%s' "$ref" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::notice::${ref} is a pre-release; the docs are built but not published."
+            elif [ "$ref" != "$newest" ]; then
+              echo "::notice::${ref} is not the newest release (${newest}); a backport never replaces newer docs."
+            else
+              deploy=true
+              release="$ref"
+            fi
+          fi
+          if [ -n "$ref" ]; then
+            git checkout --quiet --detach "$ref"
+          fi
+          if [ ! -f scripts/build_docs_site.py ]; then
+            echo "::error::${ref:-this ref} predates the docs site."
+            exit 1
+          fi
+          {
+            echo "ref=${ref:-$GITHUB_REF_NAME}"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "deploy=${deploy}"
+            echo "release=${release}"
+          } >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: Assemble the site
+        env:
+          RELEASE: ${{ steps.decide.outputs.release }}
+        run: |
+          uv run --project packages/dex-core python scripts/build_docs_site.py \
+            --out "$RUNNER_TEMP/site" --require-help ${RELEASE:+--release "$RELEASE"}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      # Installed outside the checkout, like the Mermaid canary in ci.yml, so no
+      # dependency tree lands in the working copy of a Python repo.
+      - name: Install the Mintlify CLI outside the repo
+        run: npm install --prefix "$RUNNER_TEMP/mint" --no-audit --no-fund --silent "mint@${MINT_VERSION}"
+      # Both commands exit non-zero on a finding. --check-anchors matters: the
+      # build checks anchors against GitHub's heading IDs, Mintlify derives some
+      # differently, and a link has to work on both.
+      - name: Validate with Mintlify
+        working-directory: ${{ runner.temp }}/site
+        run: |
+          mint="$RUNNER_TEMP/mint/node_modules/.bin/mint"
+          "$mint" --version
+          "$mint" validate
+          "$mint" broken-links --check-anchors --check-redirects --check-snippets
+      # Colour contrast of the docs.json palette in both modes, and alt text on
+      # every image. Exits non-zero on a failure; a "consider AAA" suggestion
+      # is a warning and passes.
+      - name: Accessibility
+        working-directory: ${{ runner.temp }}/site
+        run: '"$RUNNER_TEMP/mint/node_modules/.bin/mint" a11y'
+      # The third-party CLI only ever runs in this read-only job; the deploy job
+      # pushes exactly the files validated here.
+      - name: Keep the validated site for the deploy job
+        if: steps.decide.outputs.deploy == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: docs-site
+          path: ${{ runner.temp }}/site
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write  # the generated docs-site branch, and nothing else
+    concurrency:
+      group: docs-site-deploy
+      cancel-in-progress: false
+    environment:
+      name: docs-site
+      url: https://docs.exmergo.com
+    steps:
+      # For the git objects and the persisted credentials only; the workspace is
+      # never modified.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: docs-site
+          path: ${{ runner.temp }}/site
+      # One parentless commit per deploy, written with git plumbing: no extra
+      # action, no token in a URL. An unchanged tree does not redeploy.
+      - name: Push the docs-site branch
+        env:
+          REF: ${{ needs.build.outputs.ref }}
+          SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          set -euo pipefail
+          site="$RUNNER_TEMP/site"
+          g() { git --git-dir="$GITHUB_WORKSPACE/.git" --work-tree="$site" "$@"; }
+          export GIT_INDEX_FILE="$RUNNER_TEMP/docs-site.index"
+          (cd "$site" && g add --all --force .)
+          tree=$(g write-tree)
+          if g fetch --quiet --depth=1 origin docs-site 2>/dev/null \
+             && [ "$(g rev-parse 'FETCH_HEAD^{tree}')" = "$tree" ]; then
+            echo "docs-site already holds this tree; nothing to deploy"
+            exit 0
+          fi
+          commit=$(g -c user.name='github-actions[bot]' \
+                     -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                     commit-tree "$tree" -m "Docs site for ${REF}" -m "Built from exmergo/dex@${SHA}")
+          g push --force origin "${commit}:refs/heads/docs-site"

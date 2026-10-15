@@ -50,6 +50,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
+# Also holds the documentation site build (build/docs-site/): transformed copies
+# of references/, which must stay untracked because the documentation policy
+# tests count every untracked file that is not ignored.
 build/
 dist/
 wheels/
@@ -98,11 +101,12 @@ benchmarks/**/results/
 benchmarks/**/runs/
 benchmarks/**/.out/
 
-# ─── Node (the Mermaid syntax canary only) ───────────────────────────────────
-# This is a Python repo with exactly one npm touchpoint: the CI job that runs
-# `explore diagram` output through the real Mermaid parser. That job installs
-# outside the checkout, but anyone reproducing it by hand from the repo root
-# would otherwise leave ~160MB of untracked files behind.
+# ─── Node (two CI tools) ─────────────────────────────────────────────────────
+# This is a Python repo with two npm touchpoints: the CI job that runs
+# `explore diagram` output through the real Mermaid parser, and the Mintlify CLI
+# that validates the documentation site build. Both install outside the
+# checkout, but anyone reproducing either by hand from the repo root would
+# otherwise leave a large tree of untracked files behind.
 node_modules/
 package-lock.json
 

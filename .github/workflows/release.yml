@@ -2,9 +2,10 @@ name: Release
 
 # A semver tag drives the whole chain: a test gate, a coupling check, build, then
 # PyPI publish via Trusted Publishing (OIDC, no stored tokens) and the anti-squat
-# name stubs. The wrapper pins are bumped before tagging (scripts/
-# prepare_release.sh), so this workflow never writes back; it only verifies the
-# tagged commit is self-consistent before it publishes.
+# name stubs, then the documentation site. The wrapper pins are bumped before
+# tagging (scripts/prepare_release.sh), so this workflow never writes to tagged
+# history; it verifies the tagged commit is self-consistent before it publishes,
+# and its one write is the generated docs-site branch, after publish.
 on:
   push:
     tags: ["v*.*.*"]
@@ -58,6 +59,17 @@ jobs:
             exit 1
           fi
           echo "All wrapper pins match ${VERSION}."
+      # The docs site's changelog page leads with the release being published, and
+      # its build refuses a CHANGELOG whose newest section is another version.
+      # Checked here, before publish, so that refusal cannot strand a release on
+      # PyPI with docs that never deploy.
+      - name: CHANGELOG has a section for the tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! grep -qF "## [${VERSION}]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no '## [${VERSION}]' section. Add it, commit, and re-tag."
+            exit 1
+          fi
 
   publish:
     needs: [gate, verify-coupling]
@@ -95,6 +107,19 @@ jobs:
       - name: Publish to PyPI (Trusted Publishing)
         run: uv publish
       # Optionally emit PEP 740 / Sigstore attestations for provenance.
+
+  # The documentation site, published from the tag only after PyPI accepted the
+  # release, so the docs always describe what `pip install` gives you. Build and
+  # validation live in docs-site.yml, shared with pull requests; its deploy job is
+  # this workflow's only write, and it writes only the generated docs-site branch.
+  docs-site:
+    needs: publish
+    permissions:
+      contents: write
+    uses: ./.github/workflows/docs-site.yml
+    with:
+      ref: ${{ github.ref_name }}
+      deploy: true
 
   # Anti-squat: claim and hold names people would guess for the engine, each a
   # placeholder that redirects users to exmergo-dex-core. This is a one-time

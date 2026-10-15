@@ -9,6 +9,20 @@ tag releases both in lockstep, so entries below are keyed by the engine version.
 
 ## [Unreleased]
 
+### Added
+
+- **A documentation site build.** `scripts/build_docs_site.py` assembles a
+  Mintlify site from `docs/`, `references/`, the CLI parser and the latest
+  releases in `CHANGELOG.md`: every reference document is published at a stable
+  route with a title and description, links between references become site
+  routes, the CLI reference is rendered from the same help text `dex --help`
+  prints, and the build refuses a broken link or anchor, an unpublished
+  reference, a page missing from navigation, an em dash, or anything Mintlify
+  could not parse. Pull requests that touch those sources build and validate the
+  site in CI, and each release deploys it to a generated `docs-site` branch after
+  PyPI publish. The release now also refuses a tag whose version has no
+  `CHANGELOG.md` section.
+
 ## [1.13.2] - 2026-10-14
 
 ### Added

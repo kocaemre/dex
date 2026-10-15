@@ -579,10 +579,14 @@ def test_read_and_write_keep_line_endings_and_permissions(tmp_path: Path):
     path = tmp_path / "config.yml"
     path.write_bytes(b"connector: duckdb\r\nquery:\r\n  max_rows: 1\r\n")
     path.chmod(0o640)
+    # Compared with the mode the file actually had, not with 0o640: Windows keeps
+    # only a read-only bit, so the chmod above lands as 0o666 there. What the
+    # write owes the file is its existing mode, on every platform.
+    before = path.stat().st_mode & 0o777
     document = ConfigDocument.read(path).with_value("query.max_rows", 2)
     document.write(path)
     assert path.read_bytes() == b"connector: duckdb\r\nquery:\r\n  max_rows: 2\r\n"
-    assert path.stat().st_mode & 0o777 == 0o640
+    assert path.stat().st_mode & 0o777 == before
     assert [p.name for p in tmp_path.iterdir()] == ["config.yml"]
 
 

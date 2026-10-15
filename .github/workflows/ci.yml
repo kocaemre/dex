@@ -190,7 +190,11 @@ jobs:
       - name: Eval scoring-core tests
         run: uvx pytest evals -q
 
-  # On brand for Exmergo (easter egg): all shipped prose is em-dash free.
+  # On brand for Exmergo (easter egg): all shipped prose is em-dash free. That
+  # includes the documentation site's own pages and its config, where the site
+  # name and description live; the rest of the repo's JSON is fixtures and eval
+  # data, so only docs/ JSON is scanned. The pages the site build generates (the
+  # CLI reference, the changelog) are checked by the build itself.
   em-dashes:
     runs-on: ubuntu-latest
     steps:
@@ -200,5 +204,5 @@ jobs:
           python-version: "3.13"
       - name: Repo prose must be em-dash clean
         run: |
-          git ls-files '*.md' '*.mdc' '*.txt' \
+          git ls-files '*.md' '*.mdc' '*.mdx' '*.txt' 'docs/*.json' \
             | xargs python scripts/check_no_em_dashes.py

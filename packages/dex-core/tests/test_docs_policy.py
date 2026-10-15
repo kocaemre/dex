@@ -76,6 +76,9 @@ def versioned_markdown() -> dict[str, str]:
     `git ls-files` rather than a glob, for the same reason the em-dash CI job uses
     it: `unversioned-docs/` is present in a working tree and absent in CI, and a
     check that sees different files on the two machines is worse than no check.
+    MDX counts as markdown: the documentation site's hand-written pages under
+    `docs/` are public prose, and a restated threshold there drifts like
+    anywhere else.
     """
 
     # Tracked files, plus files that are new but not ignored. Without the second
@@ -86,7 +89,7 @@ def versioned_markdown() -> dict[str, str]:
     paths: list[str] = []
     for extra in ([], ["--others", "--exclude-standard"]):
         listed = subprocess.run(  # noqa: S603  (a fixed argv, no shell)
-            [GIT, "ls-files", "-z", *extra, "*.md", "*.mdc"],
+            [GIT, "ls-files", "-z", *extra, "*.md", "*.mdc", "*.mdx"],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -275,6 +278,11 @@ def test_relative_links_between_documents_resolve():
 
     broken = []
     for path, text in versioned_markdown().items():
+        # Site pages link by route (`/guardrails/cost-controls`), not by file, and
+        # `scripts/build_docs_site.py` resolves every one of them against the
+        # assembled site. `docs/skill.md` is plain markdown and stays checked here.
+        if path.startswith("docs/") and path.endswith(".mdx"):
+            continue
         base = (ROOT / path).parent
         for line_no, line in enumerate(text.splitlines(), start=1):
             for target in LINK.findall(line):

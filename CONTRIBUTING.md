@@ -581,6 +581,65 @@ enforced in CI. Before committing Markdown or text, you can check it locally:
 python3 scripts/check_no_em_dashes.py path/to/file.md
 ```
 
+## The documentation site
+
+The site at https://docs.exmergo.com is assembled by
+`scripts/build_docs_site.py` from four sources, and nothing it produces is
+committed to `main`:
+
+- `docs/`: hand-written pages (`.mdx`), the site configuration and navigation
+  (`docs.json`), and `skill.md`, which tells an agent that finds the site where
+  dex's real skills come from.
+- `references/`: each file is published at the route `REFERENCE_PAGES` in the
+  build script gives it. The H1 is replaced by the title in that table, links
+  between references are rewritten to site routes, and every other relative link
+  becomes a GitHub URL. Keep writing references as plain Markdown for GitHub; the
+  build does the rest.
+- The CLI parser: one page per command group, rendered from the same help text
+  `dex --help` prints, so a flag without help text fails the build.
+- `CHANGELOG.md`: the ten most recent releases.
+
+**Linking.** A page under `docs/` links by root-absolute route
+(`/guardrails/cost-controls`), never by file. A reference links by relative path
+(`cost-controls.md#the-one-time-ask`), as it always has. An anchor must resolve
+on GitHub and on the site, which name a few headings differently: avoid a `/` or
+an apostrophe in a heading you link to, and repeated heading text.
+
+**Adding a page.** A new reference needs a row in `REFERENCE_PAGES` (route,
+title, a description of 140 to 160 characters) and an entry in `docs.json`
+navigation. A new hand-written page needs `title` and `description` frontmatter
+and a navigation entry. The build fails on a page missing from navigation, on
+navigation naming a page that does not exist, and on a reference with no row.
+
+**Building and previewing locally:**
+
+```
+uv run --project packages/dex-core python scripts/build_docs_site.py --require-help
+cd build/docs-site && npx --yes mint@4.2.994 dev
+```
+
+The first command prints every problem as `path:line: message` and writes
+nothing unless the build is clean. Pull requests that touch the sources run the
+same build in CI, followed by `mint validate` and
+`mint broken-links --check-anchors`. `MINT_VERSION` in
+`.github/workflows/docs-site.yml` is the one place the Mintlify CLI version is
+set; keep the command above in step with it.
+
+**When it goes live.** The release workflow deploys the site from the tag after
+PyPI publish, by pushing one generated commit to the `docs-site` branch, which
+Mintlify serves. A documentation fix therefore ships with the next release.
+Never edit the `docs-site` branch or use Mintlify's web editor: the next deploy
+replaces the branch.
+
+**Claims.** Public pages state only what dex does today:
+
+- The hosted dbt Cloud Semantic Layer is the one path outside dex's cost guard.
+  Say so; never write that nothing runs without a ceiling.
+- `viz preview` is "not yet implemented", and nothing more specific.
+- No quality claims dex has not measured.
+- No connector or semantic-layer promises with dates.
+- Demo numbers come from the pinned demo output only.
+
 ## Keeping the Ruff version in sync
 
 The pinned Ruff version appears in three places that must move together when you
@@ -649,6 +708,14 @@ credentials:
   when PyPI answers 404 for the name. For protection before that release, you can
   publish a stub once by hand; the CI job then simply skips it. To reserve another
   name, add a stub package, a matrix entry, and a pending publisher.
+- **Documentation site:** install the Mintlify GitHub App on this repository
+  only, then point the Mintlify project's Git settings at branch `docs-site`
+  with the docs at the branch root, and add the custom domain
+  `docs.exmergo.com` (a `CNAME docs` record to the target Mintlify gives).
+  Create a `docs-site` GitHub environment whose deployment rule allows `main`
+  and `v*` tags, and a ruleset on the `docs-site` branch blocking deletion.
+  Before the first release that includes the site, publish it once by
+  dispatching the `Docs site` workflow from `main` with `allow_untagged`.
 - **ADE-bench spike:** stand up ADE-bench locally on DuckDB against the no-plugin
   baseline to confirm the runner before depending on it (the exact command is in
   `benchmarks/ade_bench/README.md`).

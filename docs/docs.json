@@ -1,0 +1,153 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Exmergo Dex",
+  "description": "Documentation for dex, the agent-native analytics engineering toolkit: explore a warehouse, transform it with reviewable dbt edits, and maintain it as it drifts.",
+  "colors": {
+    "primary": "#2563eb",
+    "light": "#60a5fa",
+    "dark": "#2563eb"
+  },
+  "fonts": {
+    "family": "Geist"
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": ["index"]
+          },
+          {
+            "group": "Guardrails",
+            "pages": ["guardrails/cost-controls", "guardrails/pii-policy"]
+          },
+          {
+            "group": "Concepts",
+            "pages": ["concepts/source-of-truth", "concepts/methodology", "concepts/dbt-project"]
+          },
+          {
+            "group": "Connectors",
+            "pages": [
+              "connectors/duckdb",
+              "connectors/bigquery",
+              "connectors/snowflake",
+              "connectors/databricks",
+              "connectors/redshift",
+              "connectors/postgres",
+              "connectors/clickhouse"
+            ]
+          },
+          {
+            "group": "Semantic layers",
+            "pages": ["semantic-layers/overview", "semantic-layers/ossie"]
+          },
+          {
+            "group": "Guides",
+            "pages": ["guides/ossie-semantic-layer"]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/connect",
+              "cli/explore",
+              "cli/transform",
+              "cli/semantic",
+              "cli/maintain",
+              "cli/config",
+              "cli/viz",
+              "cli/demo"
+            ]
+          },
+          {
+            "group": "Using dex",
+            "pages": ["reference/command-contract"]
+          },
+          {
+            "group": "Extending dex",
+            "pages": ["reference/project-formats", "reference/storage-backends", "reference/host-integration"]
+          },
+          {
+            "group": "Project",
+            "pages": ["reference/evaluation"]
+          }
+        ]
+      },
+      {
+        "tab": "Changelog",
+        "pages": ["changelog"]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Discord",
+        "href": "https://www.exmergo.com/discord?ref=docs"
+      },
+      {
+        "label": "Dex Enterprise",
+        "href": "https://www.exmergo.com/dex/enterprise"
+      }
+    ],
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/exmergo/dex"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/exmergo/dex",
+      "x": "https://x.com/exmergo",
+      "linkedin": "https://www.linkedin.com/company/exmergo/",
+      "discord": "https://www.exmergo.com/discord?ref=docs",
+      "website": "https://www.exmergo.com"
+    }
+  },
+  "seo": {
+    "indexing": "navigable",
+    "metatags": {
+      "og:site_name": "Exmergo Dex",
+      "twitter:site": "@exmergo"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view", "claude", "chatgpt", "perplexity", "mcp", "add-mcp", "cursor", "vscode"]
+  },
+  "integrations": {
+    "ga4": {
+      "measurementId": "G-D0VN4G61JD"
+    }
+  },
+  "search": {
+    "prompt": "Search the dex docs"
+  },
+  "redirects": [
+    {
+      "source": "/cli",
+      "destination": "/cli/overview"
+    },
+    {
+      "source": "/reference",
+      "destination": "/reference/command-contract"
+    }
+  ],
+  "errors": {
+    "404": {
+      "redirect": false,
+      "title": "Page not found",
+      "description": "Search the docs, or start from the [introduction](/)."
+    }
+  }
+}

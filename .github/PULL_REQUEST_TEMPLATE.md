@@ -15,5 +15,7 @@
 - [ ] PR title is ready for release notes; applicable release-note labels and
       upgrade guidance are included
 - [ ] `CHANGELOG.md` updated under `[Unreleased]`
+- [ ] User-facing behavior changes are reflected in `references/` or `docs/`
+      (the documentation site is rebuilt from them on each release)
 - [ ] Prose is em-dash free (checked in CI)
 - [ ] No credentials, secrets, or raw warehouse rows in code, tests, or fixtures
